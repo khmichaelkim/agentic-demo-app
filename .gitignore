@@ -11,3 +11,14 @@ cdk.out
 
 # Test coverage
 coverage/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+.pytest_cache/

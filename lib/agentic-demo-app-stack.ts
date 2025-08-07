@@ -83,12 +83,20 @@ export class AgenticDemoAppStack extends cdk.Stack {
       },
     });
 
+    // Create shared dependency layer
+    const dependencyLayer = new lambda.LayerVersion(this, 'PythonDependencyLayer', {
+      code: lambda.Code.fromAsset('layers/dependencies'),
+      compatibleRuntimes: [lambda.Runtime.PYTHON_3_11],
+      description: 'Common Python dependencies: aws-xray-sdk, requests'
+    });
+
     // Lambda Function - Fraud Detection with X-Ray Tracing
     const fraudDetectionFunction = new lambda.Function(this, 'FraudDetectionFunction', {
       functionName: 'fraud-detection-service',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/fraud-detection'),
+      layers: [dependencyLayer],
       timeout: cdk.Duration.seconds(30),
       memorySize: 256, // 256MB as mentioned in plan for cost optimization
       environment: {
@@ -115,6 +123,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/transaction-service'),
+      layers: [dependencyLayer],
       timeout: cdk.Duration.seconds(30),
       memorySize: 256, // 256MB as mentioned in plan for cost optimization
       environment: {
@@ -419,6 +428,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/data-generator'),
+      layers: [dependencyLayer],
       timeout: cdk.Duration.minutes(5), // Allow time for multiple API calls
       memorySize: 256,
       environment: {
@@ -452,6 +462,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.seed_handler',
       code: lambda.Code.fromAsset('lambda/data-generator'),
+      layers: [dependencyLayer],
       timeout: cdk.Duration.minutes(10),
       memorySize: 512,
       environment: {
