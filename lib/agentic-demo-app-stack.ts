@@ -472,6 +472,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       environment: {
         API_GATEWAY_URL: api.url,
         API_KEY_SECRET_ARN: apiKeySecret.secretArn,
+        FRAUD_RULES_TABLE: fraudRulesTable.tableName,
         SEED_MODE: 'true',
       },
       logGroup: new logs.LogGroup(this, 'SeedDataLogGroup', {
