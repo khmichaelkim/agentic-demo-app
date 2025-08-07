@@ -198,6 +198,10 @@ export class AgenticDemoAppStack extends cdk.Stack {
         limit: 10000, // 10,000 requests per month
         period: apigateway.Period.MONTH,
       },
+      apiStages: [{
+        api: api,
+        stage: api.deploymentStage,
+      }],
     });
 
     usagePlan.addApiKey(apiKey);
