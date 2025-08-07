@@ -10,6 +10,7 @@ import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 
 export class AgenticDemoAppStack extends cdk.Stack {
@@ -231,15 +232,94 @@ export class AgenticDemoAppStack extends cdk.Stack {
     });
 
     // Store API Key in Secrets Manager for data generator
+    // Note: This stores the key ID initially, but we use a custom resource to get the actual value
     const apiKeySecret = new secretsmanager.Secret(this, 'ApiKeySecret', {
       secretName: 'transaction-api-key-secret',
-      description: 'API Key for transaction processing',
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({ apiKey: apiKey.keyId }),
-        generateStringKey: 'apiKey',
-        excludeCharacters: ' "\\\''
-      },
+      description: 'API Key for transaction processing (stores actual key value)',
+      secretStringValue: cdk.SecretValue.unsafePlainText(
+        JSON.stringify({ 
+          apiKey: `PLACEHOLDER-${apiKey.keyId}`,
+          note: "This will be updated automatically by custom resource during deployment"
+        })
+      ),
     });
+
+    // Custom resource to retrieve actual API key value and update secret during deployment
+    const getApiKeyValue = new AwsCustomResource(this, 'GetApiKeyValue', {
+      onCreate: {
+        service: 'APIGateway',
+        action: 'getApiKey',
+        parameters: {
+          apiKey: apiKey.keyId,
+          includeValue: true
+        },
+        physicalResourceId: PhysicalResourceId.of(`api-key-retriever-${apiKey.keyId}`)
+      },
+      onUpdate: {
+        service: 'APIGateway', 
+        action: 'getApiKey',
+        parameters: {
+          apiKey: apiKey.keyId,
+          includeValue: true
+        },
+        physicalResourceId: PhysicalResourceId.of(`api-key-retriever-${apiKey.keyId}`)
+      },
+      policy: AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          actions: [
+            'apigateway:GET',
+            'apigateway:GetApiKey'
+          ],
+          resources: ['*']
+        })
+      ]),
+      logRetention: logs.RetentionDays.ONE_WEEK,
+    });
+
+    // Custom resource to update the secret with the actual API key value
+    const updateApiKeySecret = new AwsCustomResource(this, 'UpdateApiKeySecret', {
+      onCreate: {
+        service: 'SecretsManager',
+        action: 'putSecretValue',
+        parameters: {
+          SecretId: apiKeySecret.secretArn,
+          SecretString: cdk.Fn.sub(
+            '{"apiKey":"${ApiKeyValue}"}',
+            {
+              ApiKeyValue: getApiKeyValue.getResponseField('value')
+            }
+          )
+        },
+        physicalResourceId: PhysicalResourceId.of(`secret-updater-${apiKey.keyId}`)
+      },
+      onUpdate: {
+        service: 'SecretsManager',
+        action: 'putSecretValue', 
+        parameters: {
+          SecretId: apiKeySecret.secretArn,
+          SecretString: cdk.Fn.sub(
+            '{"apiKey":"${ApiKeyValue}"}',
+            {
+              ApiKeyValue: getApiKeyValue.getResponseField('value')
+            }
+          )
+        },
+        physicalResourceId: PhysicalResourceId.of(`secret-updater-${apiKey.keyId}`)
+      },
+      policy: AwsCustomResourcePolicy.fromStatements([
+        new iam.PolicyStatement({
+          actions: [
+            'secretsmanager:PutSecretValue'
+          ],
+          resources: [apiKeySecret.secretArn]
+        })
+      ]),
+      logRetention: logs.RetentionDays.ONE_WEEK,
+    });
+
+    // Ensure dependencies are correct
+    updateApiKeySecret.node.addDependency(getApiKeyValue);
+    updateApiKeySecret.node.addDependency(apiKeySecret);
 
     // Usage Plan
     const usagePlan = api.addUsagePlan('TransactionUsagePlan', {
