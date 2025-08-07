@@ -30,7 +30,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, // Pay per request for demo
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      pointInTimeRecovery: true,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
       removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
     });
 
@@ -56,7 +58,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
       },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
-      pointInTimeRecovery: true,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
       removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
     });
 
@@ -94,7 +98,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         RISK_THRESHOLD_MEDIUM: '50',
         AWS_XRAY_TRACING_NAME: 'fraud-detection-service',
       },
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: new logs.LogGroup(this, 'FraudDetectionLogGroup', {
+        retention: logs.RetentionDays.ONE_YEAR,
+      }),
       // Enable X-Ray tracing
       tracing: lambda.Tracing.ACTIVE,
     });
@@ -118,7 +124,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
         AWS_XRAY_TRACING_NAME: 'transaction-service',
       },
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: new logs.LogGroup(this, 'TransactionServiceLogGroup', {
+        retention: logs.RetentionDays.ONE_YEAR,
+      }),
       // Enable X-Ray tracing
       tracing: lambda.Tracing.ACTIVE,
     });
@@ -417,7 +425,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         API_GATEWAY_URL: api.url,
         API_KEY_SECRET_ARN: apiKeySecret.secretArn,
       },
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: new logs.LogGroup(this, 'DataGeneratorLogGroup', {
+        retention: logs.RetentionDays.ONE_YEAR,
+      }),
       tracing: lambda.Tracing.ACTIVE, // Enable X-Ray tracing
     });
 
@@ -449,7 +459,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         API_KEY_SECRET_ARN: apiKeySecret.secretArn,
         SEED_MODE: 'true',
       },
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: new logs.LogGroup(this, 'SeedDataLogGroup', {
+        retention: logs.RetentionDays.ONE_YEAR,
+      }),
       tracing: lambda.Tracing.ACTIVE,
     });
 

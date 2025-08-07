@@ -13,19 +13,20 @@
     "test:coverage": "cd tests && python -m pip install -r requirements.txt > /dev/null 2>&1 && python -m pytest --cov=../lambda --cov-report=html --cov-report=term",
     "test:watch": "cd tests && python -m pip install -r requirements.txt > /dev/null 2>&1 && python -m pytest -f",
     "cdk": "cdk",
+    "cdk:bootstrap": "cdk bootstrap",
     "cdk:deploy": "cdk deploy",
     "cdk:destroy": "cdk destroy",
     "cdk:diff": "cdk diff",
     "cdk:synth": "cdk synth"
   },
   "devDependencies": {
-    "@types/node": "22.7.9",
-    "aws-cdk": "2.1020.2",
+    "@types/node": "^24.2.0",
+    "aws-cdk": "2.1024.0",
     "ts-node": "^10.9.2",
     "typescript": "~5.6.3"
   },
   "dependencies": {
-    "aws-cdk-lib": "^2.180.0",
+    "aws-cdk-lib": "2.210.0",
     "constructs": "^10.0.0"
   }
 }
