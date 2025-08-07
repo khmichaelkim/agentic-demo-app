@@ -71,6 +71,18 @@ export class AgenticDemoAppStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
     });
 
+    // Scenario Configuration Table for live demo control
+    const scenarioConfigTable = new dynamodb.Table(this, 'ScenarioConfigTable', {
+      tableName: 'ScenarioConfigTable',
+      partitionKey: {
+        name: 'configId',
+        type: dynamodb.AttributeType.STRING
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, // On-demand for demo control
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
+    });
+
     // SQS Queues
     
     // Dead Letter Queue
@@ -147,11 +159,43 @@ export class AgenticDemoAppStack extends cdk.Stack {
       tracing: lambda.Tracing.ACTIVE,
     });
 
+    // Lambda Function - Scenario Control for Demo Management
+    const scenarioControlFunction = new lambda.Function(this, 'ScenarioControlFunction', {
+      functionName: 'scenario-control',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/scenario-control'),
+      layers: [dependencyLayer],
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      environment: {
+        SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
+        AWS_XRAY_TRACING_NAME: 'scenario-control',
+      },
+      logGroup: new logs.LogGroup(this, 'ScenarioControlLogGroup', {
+        retention: logs.RetentionDays.ONE_YEAR,
+      }),
+      tracing: lambda.Tracing.ACTIVE,
+    });
+
     // Grant permissions to the transaction service Lambda
     transactionsTable.grantReadWriteData(transactionServiceFunction);
     fraudRulesTable.grantReadData(transactionServiceFunction);
     notificationQueue.grantSendMessages(transactionServiceFunction);
     fraudDetectionFunction.grantInvoke(transactionServiceFunction);
+
+    // Grant permissions to the scenario control Lambda
+    scenarioConfigTable.grantReadWriteData(scenarioControlFunction);
+    
+    // Grant CloudWatch Logs permissions to scenario control Lambda
+    scenarioControlFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'logs:StartQuery',
+        'logs:GetQueryResults',
+        'logs:DescribeLogGroups'
+      ],
+      resources: ['*'],
+    }));
 
     // Grant CloudWatch permissions
     transactionServiceFunction.addToRolePolicy(new iam.PolicyStatement({
@@ -227,6 +271,44 @@ export class AgenticDemoAppStack extends cdk.Stack {
     // Add health check resource  
     const healthResource = api.root.addResource('health');
     healthResource.addMethod('GET', transactionLambdaIntegration, {
+      apiKeyRequired: true,
+    });
+
+    // Add demo control endpoints for live scenario management
+    const scenarioLambdaIntegration = new apigateway.LambdaIntegration(scenarioControlFunction);
+    
+    const demoResource = api.root.addResource('demo');
+    
+    // /demo/scenario - GET current scenario, POST to set scenario
+    const scenarioResource = demoResource.addResource('scenario');
+    scenarioResource.addMethod('GET', scenarioLambdaIntegration, {
+      apiKeyRequired: true,
+    });
+    scenarioResource.addMethod('POST', scenarioLambdaIntegration, {
+      apiKeyRequired: true,
+    });
+    
+    // /demo/status - GET scenario status with timing info
+    const statusResource = demoResource.addResource('status');
+    statusResource.addMethod('GET', scenarioLambdaIntegration, {
+      apiKeyRequired: true,
+    });
+    
+    // /demo/reset - POST to reset to normal scenario
+    const resetResource = demoResource.addResource('reset');
+    resetResource.addMethod('POST', scenarioLambdaIntegration, {
+      apiKeyRequired: true,
+    });
+    
+    // /demo/scenarios - GET list of available scenarios
+    const scenariosResource = demoResource.addResource('scenarios');
+    scenariosResource.addMethod('GET', scenarioLambdaIntegration, {
+      apiKeyRequired: true,
+    });
+    
+    // /demo/flow - GET transaction flow from CloudWatch Logs
+    const flowResource = demoResource.addResource('flow');
+    flowResource.addMethod('GET', scenarioLambdaIntegration, {
       apiKeyRequired: true,
     });
 
@@ -323,6 +405,79 @@ export class AgenticDemoAppStack extends cdk.Stack {
       height: 6,
     });
 
+    // Throttling metrics widgets for demo scenarios
+    const throttlingMetricsWidget = new cloudwatch.GraphWidget({
+      title: 'DynamoDB Throttling Metrics',
+      left: [
+        new cloudwatch.Metric({
+          namespace: 'TransactionProcessing/Throttling',
+          metricName: 'DynamoDBThrottling',
+          statistic: 'Sum',
+        }),
+        new cloudwatch.Metric({
+          namespace: 'TransactionProcessing/Throttling', 
+          metricName: 'TransactionThrottled',
+          statistic: 'Sum',
+        }),
+      ],
+      right: [
+        new cloudwatch.Metric({
+          namespace: 'TransactionProcessing/Throttling',
+          metricName: 'DynamoDBRetrySuccess',
+          statistic: 'Sum',
+        }),
+        new cloudwatch.Metric({
+          namespace: 'TransactionProcessing/Throttling',
+          metricName: 'DynamoDBRetryExhausted', 
+          statistic: 'Sum',
+        }),
+      ],
+      width: 12,
+      height: 6,
+    });
+
+    const throttlingRateWidget = new cloudwatch.GraphWidget({
+      title: 'Throttling Rate and Success Rate',
+      left: [
+        new cloudwatch.MathExpression({
+          expression: 'throttled / (throttled + successful) * 100',
+          usingMetrics: {
+            throttled: new cloudwatch.Metric({
+              namespace: 'TransactionProcessing/Throttling',
+              metricName: 'DynamoDBThrottling',
+              statistic: 'Sum',
+            }),
+            successful: new cloudwatch.Metric({
+              namespace: 'TransactionProcessing',
+              metricName: 'TransactionCount',
+              statistic: 'Sum',
+            }),
+          },
+          label: 'Throttling Rate (%)',
+        }),
+      ],
+      right: [
+        new cloudwatch.MathExpression({
+          expression: 'retrySuccess / (retrySuccess + retryExhausted) * 100',
+          usingMetrics: {
+            retrySuccess: new cloudwatch.Metric({
+              namespace: 'TransactionProcessing/Throttling',
+              metricName: 'DynamoDBRetrySuccess',
+              statistic: 'Sum',
+            }),
+            retryExhausted: new cloudwatch.Metric({
+              namespace: 'TransactionProcessing/Throttling',
+              metricName: 'DynamoDBRetryExhausted',
+              statistic: 'Sum',
+            }),
+          },
+          label: 'Retry Success Rate (%)',
+        }),
+      ],
+      width: 12,
+      height: 6,
+    });
+
     // Add widgets to dashboard
     dashboard.addWidgets(
       transactionCountWidget,
@@ -335,6 +490,10 @@ export class AgenticDemoAppStack extends cdk.Stack {
     dashboard.addWidgets(
       lambdaInvocationsWidget,
       apiGatewayWidget
+    );
+    dashboard.addWidgets(
+      throttlingMetricsWidget,
+      throttlingRateWidget
     );
 
     // CloudWatch Alarms for Critical Metrics
@@ -433,6 +592,68 @@ export class AgenticDemoAppStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
+    // Throttling-specific alarms for demo scenarios
+    
+    // DynamoDB Throttling Detection
+    const dynamoThrottlingAlarm = new cloudwatch.Alarm(this, 'DynamoThrottlingAlarm', {
+      alarmName: 'dynamodb-throttling-detected',
+      alarmDescription: 'Alarm when DynamoDB throttling is detected',
+      metric: new cloudwatch.Metric({
+        namespace: 'TransactionProcessing/Throttling',
+        metricName: 'DynamoDBThrottling',
+        statistic: 'Sum',
+        period: cdk.Duration.minutes(1),
+      }),
+      threshold: 1, // Any throttling event triggers the alarm
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    // High Transaction Throttling Rate
+    const highThrottlingRateAlarm = new cloudwatch.Alarm(this, 'HighThrottlingRateAlarm', {
+      alarmName: 'high-transaction-throttling-rate',
+      alarmDescription: 'Alarm when transaction throttling rate exceeds 5%',
+      metric: new cloudwatch.MathExpression({
+        expression: 'IF(throttled + successful > 0, throttled / (throttled + successful) * 100, 0)',
+        usingMetrics: {
+          throttled: new cloudwatch.Metric({
+            namespace: 'TransactionProcessing/Throttling',
+            metricName: 'TransactionThrottled',
+            statistic: 'Sum',
+            period: cdk.Duration.minutes(5),
+          }),
+          successful: new cloudwatch.Metric({
+            namespace: 'TransactionProcessing',
+            metricName: 'TransactionCount',
+            dimensionsMap: { Status: 'APPROVED' },
+            statistic: 'Sum',
+            period: cdk.Duration.minutes(5),
+          }),
+        },
+      }),
+      threshold: 5, // 5% throttling rate
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      evaluationPeriods: 2,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    // Retry Exhaustion Alarm
+    const retryExhaustionAlarm = new cloudwatch.Alarm(this, 'RetryExhaustionAlarm', {
+      alarmName: 'dynamodb-retry-exhaustion',
+      alarmDescription: 'Alarm when DynamoDB retries are exhausted',
+      metric: new cloudwatch.Metric({
+        namespace: 'TransactionProcessing/Throttling',
+        metricName: 'DynamoDBRetryExhausted',
+        statistic: 'Sum',
+        period: cdk.Duration.minutes(2),
+      }),
+      threshold: 5, // More than 5 retry exhaustions in 2 minutes
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+      evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
     // Data Generator Lambda Function
     const dataGeneratorFunction = new lambda.Function(this, 'DataGeneratorFunction', {
       functionName: 'transaction-data-generator',
@@ -445,6 +666,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       environment: {
         API_GATEWAY_URL: api.url,
         API_KEY_SECRET_ARN: apiKeySecret.secretArn,
+        SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
       },
       logGroup: new logs.LogGroup(this, 'DataGeneratorLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
@@ -455,12 +677,13 @@ export class AgenticDemoAppStack extends cdk.Stack {
     // Grant permissions to data generator
     apiKeySecret.grantRead(dataGeneratorFunction);
     fraudRulesTable.grantReadWriteData(dataGeneratorFunction);
+    scenarioConfigTable.grantReadData(dataGeneratorFunction);
 
-    // CloudWatch Events Rule to trigger data generator every 5 minutes
+    // CloudWatch Events Rule to trigger data generator every 1 minute
     const dataGeneratorRule = new events.Rule(this, 'DataGeneratorRule', {
       ruleName: 'transaction-data-generator-schedule',
-      description: 'Trigger transaction data generator every 5 minutes',
-      schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
+      description: 'Trigger transaction data generator every 1 minute',
+      schedule: events.Schedule.rate(cdk.Duration.minutes(1)),
       enabled: true, // Set to false if you want to disable automatic data generation
     });
 
@@ -480,6 +703,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         API_GATEWAY_URL: api.url,
         API_KEY_SECRET_ARN: apiKeySecret.secretArn,
         FRAUD_RULES_TABLE: fraudRulesTable.tableName,
+        SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
         SEED_MODE: 'true',
       },
       logGroup: new logs.LogGroup(this, 'SeedDataLogGroup', {
@@ -490,6 +714,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
 
     apiKeySecret.grantRead(seedDataFunction);
     fraudRulesTable.grantReadWriteData(seedDataFunction);
+    scenarioConfigTable.grantReadData(seedDataFunction);
 
     // Notification Processor Lambda Function - Step 7: Customer Notification
     const notificationProcessorFunction = new lambda.Function(this, 'NotificationProcessorFunction', {
@@ -593,6 +818,16 @@ export class AgenticDemoAppStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ApiKeySecretArn', {
       value: apiKeySecret.secretArn,
       description: 'API Key Secret ARN (use AWS CLI to get the actual key value)'
+    });
+
+    new cdk.CfnOutput(this, 'ScenarioConfigTableName', {
+      value: scenarioConfigTable.tableName,
+      description: 'DynamoDB Scenario Configuration Table Name for demo control'
+    });
+
+    new cdk.CfnOutput(this, 'ScenarioControlFunctionName', {
+      value: scenarioControlFunction.functionName,
+      description: 'Scenario Control Lambda Function Name for demo management'
     });
   }
 }

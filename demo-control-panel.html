@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transaction Demo Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+        
+        .main-content {
+            padding: 30px;
+        }
+        
+        .config-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 2px solid #e8f4fd;
+            border-radius: 10px;
+            background: #f8fbff;
+        }
+        
+        .section-title {
+            font-size: 1.3em;
+            color: #2c3e50;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+        
+        .api-config {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .form-group label {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #2c3e50;
+        }
+        
+        .form-group input {
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .status-card {
+            background: white;
+            border: 2px solid #e8f4fd;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .status-card h3 {
+            color: #2c3e50;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+        
+        .status-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            font-size: 14px;
+        }
+        
+        .status-info .label {
+            font-weight: 600;
+            color: #7f8c8d;
+        }
+        
+        .status-info .value {
+            color: #2c3e50;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .scenarios-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .scenario-card {
+            background: white;
+            border: 2px solid #e8f4fd;
+            border-radius: 8px;
+            padding: 15px;
+            cursor: pointer;
+            transition: all 0.3s;
+            position: relative;
+        }
+        
+        .scenario-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+            border-color: #3498db;
+        }
+        
+        .scenario-card.active {
+            background: linear-gradient(135deg, #e8f8f5 0%, #d5f4e6 100%);
+            border-color: #27ae60;
+        }
+        
+        .scenario-card.active::before {
+            content: "✓ ACTIVE";
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #27ae60;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        
+        .scenario-name {
+            font-weight: 600;
+            font-size: 1.1em;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+        
+        .scenario-description {
+            color: #7f8c8d;
+            font-size: 13px;
+            line-height: 1.4;
+            margin-bottom: 10px;
+        }
+        
+        .scenario-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #95a5a6;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(52, 152, 219, 0.4);
+        }
+        
+        .btn:active {
+            transform: translateY(0);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+        }
+        
+        .btn-danger:hover {
+            box-shadow: 0 6px 12px rgba(231, 76, 60, 0.4);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #27ae60 0%, #219a52 100%);
+        }
+        
+        .btn-success:hover {
+            box-shadow: 0 6px 12px rgba(39, 174, 96, 0.4);
+        }
+        
+        .callout {
+            background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%);
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-weight: 500;
+            position: relative;
+            animation: pulse 2s infinite;
+        }
+        
+        .callout::before {
+            content: "📢";
+            margin-right: 10px;
+        }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(243, 156, 18, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(243, 156, 18, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(243, 156, 18, 0); }
+        }
+        
+        .error {
+            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        
+        .error::before {
+            content: "❌ ";
+        }
+        
+        .success {
+            background: linear-gradient(135deg, #27ae60 0%, #219a52 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        
+        .success::before {
+            content: "✅ ";
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #ecf0f1;
+            border-radius: 5px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #3498db 0%, #2980b9 100%);
+            border-radius: 5px;
+            transition: width 0.3s ease;
+        }
+        
+        @media (max-width: 768px) {
+            .api-config {
+                grid-template-columns: 1fr;
+            }
+            
+            .status-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .scenarios-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚙️ Agentic Demo App Control Panel</h1>
+        </div>
+        
+        <div class="main-content">
+            <!-- API Configuration -->
+            <div class="config-section">
+                <div class="section-title">🔧 API Configuration</div>
+                <div class="api-config">
+                    <div class="form-group">
+                        <label for="apiUrl">API Gateway URL:</label>
+                        <input type="text" id="apiUrl" placeholder="https://your-api-gateway-url.amazonaws.com/prod" />
+                    </div>
+                    <div class="form-group">
+                        <label for="apiKey">API Key:</label>
+                        <input type="text" id="apiKey" placeholder="Your API key" />
+                    </div>
+                </div>
+                <div class="button-group">
+                    <button class="btn btn-success" onclick="connectToAPI()">Connect & Load Scenarios</button>
+                    <button class="btn" onclick="refreshStatus()">Refresh Status</button>
+                </div>
+            </div>
+
+            <!-- Current Status -->
+            <div class="config-section">
+                <div class="section-title">📊 Status</div>
+                <div class="status-grid">
+                    <div class="status-card">
+                        <h3>Active Scenario</h3>
+                        <div class="status-info">
+                            <span class="label">Scenario:</span>
+                            <span class="value" id="currentScenario">-</span>
+                            <span class="label">Trans/Min:</span>
+                            <span class="value" id="currentTps">-</span>
+                            <span class="label">Elapsed:</span>
+                            <span class="value" id="elapsedTime">-</span>
+                            <span class="label">Time Left:</span>
+                            <span class="value" id="remainingTime">-</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <h3>System Health</h3>
+                        <div class="status-info">
+                            <span class="label">API Status:</span>
+                            <span class="value" id="apiStatus">Disconnected</span>
+                            <span class="label">Last Update:</span>
+                            <span class="value" id="lastUpdate">Never</span>
+                            <span class="label">Auto Refresh:</span>
+                            <span class="value" id="autoRefreshStatus">On (5s)</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="demoCallout"></div>
+            </div>
+
+            <!-- Live Transaction Flow -->
+            <div class="config-section">
+                <div class="section-title">⚡ Live Transaction Flow</div>
+                <div class="status-grid">
+                    <div class="status-card" style="grid-column: 1 / -1;">
+                        <h3>Recent Transactions</h3>
+                        <div id="transactionFlow" style="font-family: 'Courier New', monospace; font-size: 12px; background: #f8f9fa; padding: 15px; border-radius: 5px; max-height: 300px; overflow-y: auto;">
+                            <div style="text-align: center; color: #7f8c8d; padding: 20px;">
+                                <div>🔄 Connecting to transaction stream...</div>
+                                <div style="font-size: 10px; margin-top: 5px;">Flow data will appear here once connected to API</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <h3>Flow Metrics</h3>
+                        <div class="status-info">
+                            <span class="label">Query Status:</span>
+                            <span class="value" id="flowQueryStatus">Not Connected</span>
+                            <span class="label">Transactions Found:</span>
+                            <span class="value" id="transactionsFound">-</span>
+                            <span class="label">Time Range:</span>
+                            <span class="value" id="flowTimeRange">Last 5 minutes</span>
+                            <span class="label">Last Refresh:</span>
+                            <span class="value" id="flowLastUpdate">Never</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scenario Selection -->
+            <div class="config-section">
+                <div class="section-title">🎬 Available Demo Scenarios</div>
+                <div class="scenarios-grid" id="scenariosGrid">
+                    <div class="scenario-card">
+                        <div class="scenario-name">Loading...</div>
+                        <div class="scenario-description">Connect to API to load available scenarios</div>
+                    </div>
+                </div>
+                <div class="button-group">
+                    <button class="btn btn-danger" onclick="resetToNormal()">Reset to Normal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let apiUrl = '';
+        let apiKey = '';
+        let currentScenarioName = 'normal';
+        let autoRefreshInterval = null;
+        let scenarios = [];
+
+        // Load saved configuration
+        function loadConfig() {
+            const savedUrl = localStorage.getItem('demoApiUrl');
+            const savedKey = localStorage.getItem('demoApiKey');
+            
+            if (savedUrl) {
+                document.getElementById('apiUrl').value = savedUrl;
+                apiUrl = savedUrl;
+            }
+            
+            if (savedKey) {
+                document.getElementById('apiKey').value = savedKey;
+                apiKey = savedKey;
+            }
+        }
+
+        // Save configuration
+        function saveConfig() {
+            localStorage.setItem('demoApiUrl', apiUrl);
+            localStorage.setItem('demoApiKey', apiKey);
+        }
+
+        // Show message
+        function showMessage(text, type = 'success') {
+            const existingMessages = document.querySelectorAll('.error, .success');
+            existingMessages.forEach(msg => msg.remove());
+            
+            const messageDiv = document.createElement('div');
+            messageDiv.className = type;
+            messageDiv.textContent = text;
+            
+            const configSection = document.querySelector('.config-section');
+            configSection.appendChild(messageDiv);
+            
+            setTimeout(() => messageDiv.remove(), 5000);
+        }
+
+        // API Request helper
+        async function makeAPIRequest(endpoint, method = 'GET', body = null) {
+            const url = `${apiUrl}/demo/${endpoint}`;
+            const options = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': apiKey
+                }
+            };
+            
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+            
+            const response = await fetch(url, options);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            return await response.json();
+        }
+
+        // Connect to API and load scenarios
+        async function connectToAPI() {
+            apiUrl = document.getElementById('apiUrl').value.trim();
+            apiKey = document.getElementById('apiKey').value.trim();
+            
+            if (!apiUrl || !apiKey) {
+                showMessage('Please provide both API URL and API Key', 'error');
+                return;
+            }
+            
+            // Remove trailing slash and /demo if present
+            apiUrl = apiUrl.replace(/\/+$/, '').replace(/\/demo$/, '');
+            
+            try {
+                // Test connection and load scenarios
+                const scenariosData = await makeAPIRequest('scenarios');
+                scenarios = scenariosData.scenarios || [];
+                
+                saveConfig();
+                document.getElementById('apiStatus').textContent = 'Connected';
+                showMessage('Successfully connected to API!');
+                
+                await loadScenarios();
+                await refreshStatus();
+                await refreshTransactionFlow();
+                
+                // Enable auto-refresh by default
+                if (!autoRefreshInterval) {
+                    autoRefreshInterval = setInterval(async () => {
+                        try {
+                            console.log('Auto-refresh triggered at', new Date().toLocaleTimeString());
+                            await refreshStatus();
+                            await refreshTransactionFlow();
+                        } catch (error) {
+                            console.error('Auto-refresh error:', error);
+                        }
+                    }, 5000); // Refresh every 5 seconds
+                    document.getElementById('autoRefreshStatus').textContent = 'On (5s)';
+                }
+                
+            } catch (error) {
+                console.error('Connection failed:', error);
+                showMessage(`Connection failed: ${error.message}`, 'error');
+                document.getElementById('apiStatus').textContent = 'Error';
+            }
+        }
+
+        // Load and display scenarios
+        async function loadScenarios() {
+            const grid = document.getElementById('scenariosGrid');
+            
+            if (!scenarios.length) {
+                grid.innerHTML = '<div class="scenario-card"><div class="scenario-name">No scenarios available</div></div>';
+                return;
+            }
+            
+            grid.innerHTML = scenarios.map(scenario => `
+                <div class="scenario-card ${scenario.name === currentScenarioName ? 'active' : ''}" 
+                     onclick="setScenario('${scenario.name}')">
+                    <div class="scenario-name">${scenario.name.replace(/_/g, ' ').toUpperCase()}</div>
+                    <div class="scenario-description">${scenario.description || 'No description available'}</div>
+                    <div class="scenario-meta">
+                        <span>${scenario.tps} TPM</span>
+                        <span>${Math.floor(scenario.duration / 60)}m ${scenario.duration % 60}s</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Set scenario
+        async function setScenario(scenarioName) {
+            try {
+                await makeAPIRequest('scenario', 'POST', { scenario: scenarioName });
+                currentScenarioName = scenarioName;
+                
+                showMessage(`Scenario switched to: ${scenarioName.replace(/_/g, ' ').toUpperCase()}`);
+                await loadScenarios(); // Refresh to show active scenario
+                await refreshStatus();
+                
+            } catch (error) {
+                console.error('Failed to set scenario:', error);
+                showMessage(`Failed to set scenario: ${error.message}`, 'error');
+            }
+        }
+
+        // Refresh status
+        async function refreshStatus() {
+            if (!apiUrl || !apiKey) {
+                return;
+            }
+            
+            try {
+                const status = await makeAPIRequest('status');
+                
+                document.getElementById('currentScenario').textContent = 
+                    (status.current_scenario || 'normal').replace(/_/g, ' ').toUpperCase();
+                document.getElementById('currentTps').textContent = (status.config && status.config.tps) || '-';
+                
+                // Show N/A for elapsed/time left in normal scenario
+                const isNormalScenario = (status.current_scenario || 'normal') === 'normal';
+                
+                document.getElementById('elapsedTime').textContent = 
+                    isNormalScenario ? 'N/A' : 
+                    status.elapsed_seconds ? `${Math.floor(status.elapsed_seconds / 60)}m ${status.elapsed_seconds % 60}s` : '-';
+                document.getElementById('remainingTime').textContent = 
+                    isNormalScenario ? 'N/A' : 
+                    status.time_remaining ? `${Math.floor(parseInt(status.time_remaining) / 60)}m ${parseInt(status.time_remaining) % 60}s` : 'Completed';
+                
+                // Update progress bar
+                const progressFill = document.getElementById('progressFill');
+                if (status.config && status.config.duration && status.elapsed_seconds !== undefined) {
+                    const duration = parseInt(status.config.duration);
+                    const progress = (status.elapsed_seconds / duration) * 100;
+                    progressFill.style.width = `${Math.min(progress, 100)}%`;
+                }
+                
+                // Update demo callout
+                const calloutDiv = document.getElementById('demoCallout');
+                if (status.demo_tip) {
+                    calloutDiv.innerHTML = `<div class="callout">${status.demo_tip}</div>`;
+                } else {
+                    calloutDiv.innerHTML = '';
+                }
+                
+                currentScenarioName = status.current_scenario || 'normal';
+                await loadScenarios(); // Refresh to show active scenario
+                
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+                
+                // Also refresh transaction flow
+                await refreshTransactionFlow();
+                
+            } catch (error) {
+                console.error('Failed to refresh status:', error);
+                document.getElementById('apiStatus').textContent = 'Error';
+            }
+        }
+
+        // Refresh transaction flow
+        async function refreshTransactionFlow() {
+            if (!apiUrl || !apiKey) {
+                return;
+            }
+            
+            try {
+                const flowData = await makeAPIRequest('flow');
+                
+                // Update flow metrics
+                document.getElementById('flowQueryStatus').textContent = 
+                    flowData.query_status === 'success' ? '✅ Connected' : 
+                    flowData.query_status === 'timeout' ? '⏱️ Timeout' : '❌ Error';
+                    
+                document.getElementById('transactionsFound').textContent = flowData.total_found || 0;
+                document.getElementById('flowLastUpdate').textContent = new Date().toLocaleTimeString();
+                
+                // Format transaction flow display
+                const flowDiv = document.getElementById('transactionFlow');
+                
+                if (flowData.transactions && flowData.transactions.length > 0) {
+                    let html = `<div style="margin-bottom: 10px; color: #2c3e50; font-weight: bold;">📊 Transaction Processing Flow (Last ${flowData.transactions.length} transactions)</div>`;
+                    
+                    // Create table header
+                    html += `<table style="width: 100%; border-collapse: collapse; font-size: 11px;">`;
+                    html += `<tr style="background: #e8f4fd; border-bottom: 1px solid #ddd;">`;
+                    html += `<th style="padding: 5px; text-align: left; width: 80px;">ID</th>`;
+                    html += `<th style="padding: 5px; text-align: left; width: 80px;">Status</th>`;
+                    html += `<th style="padding: 5px; text-align: left; width: 60px;">Risk</th>`;
+                    html += `<th style="padding: 5px; text-align: left; width: 70px;">Amount</th>`;
+                    html += `<th style="padding: 5px; text-align: left; width: 80px;">User</th>`;
+                    html += `<th style="padding: 5px; text-align: left;">Time</th>`;
+                    html += `</tr>`;
+                    
+                    // Add transaction rows
+                    flowData.transactions.forEach((txn, index) => {
+                        const statusColor = 
+                            txn.status === 'APPROVED' ? '#27ae60' : 
+                            txn.status === 'DECLINED' ? '#e74c3c' : '#f39c12';
+                        const riskColor = 
+                            txn.riskLevel === 'LOW' ? '#27ae60' :
+                            txn.riskLevel === 'HIGH' ? '#e74c3c' : '#f39c12';
+                        
+                        html += `<tr style="border-bottom: 1px solid #eee; ${index % 2 === 0 ? 'background: #fafafa;' : ''}">`;
+                        html += `<td style="padding: 3px 5px; font-family: monospace;">${txn.id}</td>`;
+                        html += `<td style="padding: 3px 5px; color: ${statusColor}; font-weight: bold;">${txn.status}</td>`;
+                        html += `<td style="padding: 3px 5px; color: ${riskColor};">${txn.riskLevel}</td>`;
+                        html += `<td style="padding: 3px 5px;">$${parseFloat(txn.amount || 0).toFixed(2)}</td>`;
+                        html += `<td style="padding: 3px 5px; font-family: monospace;">${txn.userId.substring(0, 12)}</td>`;
+                        html += `<td style="padding: 3px 5px; font-size: 10px;">${txn.timestamp}</td>`;
+                        html += `</tr>`;
+                    });
+                    
+                    html += `</table>`;
+                    
+                    // Add flow summary
+                    const approved = flowData.transactions.filter(t => t.status === 'APPROVED').length;
+                    const declined = flowData.transactions.filter(t => t.status === 'DECLINED').length;
+                    const successRate = flowData.transactions.length > 0 ? 
+                        ((approved / flowData.transactions.length) * 100).toFixed(1) : 0;
+                    
+                    html += `<div style="margin-top: 10px; padding: 8px; background: #e8f6f3; border-radius: 3px; font-size: 10px;">`;
+                    html += `<strong>Summary:</strong> ${approved} approved, ${declined} declined | Success Rate: ${successRate}%`;
+                    html += `</div>`;
+                    
+                    flowDiv.innerHTML = html;
+                } else {
+                    // No transactions found
+                    flowDiv.innerHTML = `
+                        <div style="text-align: center; color: #7f8c8d; padding: 30px;">
+                            <div style="font-size: 14px;">📭 No recent transactions found</div>
+                            <div style="font-size: 10px; margin-top: 5px;">
+                                ${flowData.message || 'Transactions will appear here when processing occurs'}
+                            </div>
+                            <div style="font-size: 10px; margin-top: 5px; color: #95a5a6;">
+                                Searching last 5 minutes of logs...
+                            </div>
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                console.error('Failed to refresh transaction flow:', error);
+                document.getElementById('flowQueryStatus').textContent = '❌ Error';
+                document.getElementById('transactionFlow').innerHTML = `
+                    <div style="text-align: center; color: #e74c3c; padding: 20px;">
+                        <div>❌ Error loading transaction flow</div>
+                        <div style="font-size: 10px; margin-top: 5px;">${error.message}</div>
+                    </div>
+                `;
+            }
+        }
+
+        // Reset to normal scenario
+        async function resetToNormal() {
+            try {
+                await makeAPIRequest('reset', 'POST');
+                currentScenarioName = 'normal';
+                
+                showMessage('Reset to normal scenario');
+                await loadScenarios();
+                await refreshStatus();
+                
+            } catch (error) {
+                console.error('Failed to reset:', error);
+                showMessage(`Failed to reset: ${error.message}`, 'error');
+            }
+        }
+
+        // Toggle auto refresh
+        function toggleAutoRefresh() {
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+                autoRefreshInterval = null;
+                document.getElementById('autoRefreshStatus').textContent = 'Off';
+                showMessage('Auto refresh disabled');
+            } else {
+                autoRefreshInterval = setInterval(async () => {
+                    try {
+                        console.log('Auto-refresh triggered at', new Date().toLocaleTimeString());
+                        await refreshStatus();
+                        await refreshTransactionFlow();
+                    } catch (error) {
+                        console.error('Auto-refresh error:', error);
+                    }
+                }, 5000); // Refresh every 5 seconds
+                document.getElementById('autoRefreshStatus').textContent = 'On (5s)';
+                showMessage('Auto refresh enabled (5s interval)');
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfig();
+            
+            // Auto-connect if credentials are available
+            if (document.getElementById('apiUrl').value && document.getElementById('apiKey').value) {
+                setTimeout(connectToAPI, 1000);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -3,13 +3,23 @@ import random
 import asyncio
 import time
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Any
 import boto3
 import requests
 from aws_xray_sdk.core import xray_recorder
 from aws_xray_sdk.core import patch_all
 import logging
+
+# Import scenario management
+from scenarios import (
+    get_scenario_config, 
+    calculate_current_tps, 
+    get_demo_callout,
+    get_transaction_mix,
+    should_use_special_features,
+    DEFAULT_SCENARIO
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,10 +30,12 @@ patch_all()
 
 # Initialize AWS clients
 secrets_client = boto3.client('secretsmanager')
+dynamodb = boto3.resource('dynamodb')
 
 # Environment variables
 API_GATEWAY_URL = os.environ['API_GATEWAY_URL']
 API_KEY_SECRET_ARN = os.environ['API_KEY_SECRET_ARN']
+SCENARIO_CONFIG_TABLE = os.environ.get('SCENARIO_CONFIG_TABLE', 'ScenarioConfigTable')
 
 # Sample data for realistic transactions
 SAMPLE_USERS = [
@@ -41,6 +53,11 @@ SAMPLE_MERCHANTS = [
 
 CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD']
 LOCATIONS = ['US-CA', 'US-NY', 'US-TX', 'US-FL', 'EU-GB', 'EU-DE', 'CA-ON', 'AU-NSW']
+HIGH_RISK_LOCATIONS = ['XX-XX', 'UNKNOWN', 'CN-XX', 'RU-XX']
+
+# User pools for different scenarios
+CONCENTRATED_USERS = ['user-001', 'user-002', 'user-003']  # For velocity testing
+NORMAL_USERS = SAMPLE_USERS  # All users for normal scenarios
 
 # Transaction patterns for different scenarios
 TRANSACTION_PATTERNS = {
@@ -66,6 +83,54 @@ TRANSACTION_PATTERNS = {
     }
 }
 
+@xray_recorder.capture('get_current_scenario')
+def get_current_scenario() -> Dict[str, Any]:
+    """Get current scenario configuration from DynamoDB"""
+    try:
+        scenario_table = dynamodb.Table(SCENARIO_CONFIG_TABLE)
+        response = scenario_table.get_item(
+            Key={'configId': 'current'}
+        )
+        
+        if 'Item' in response:
+            return response['Item']
+        else:
+            # Return default scenario if not configured
+            logger.info("No scenario configured, using default")
+            return DEFAULT_SCENARIO
+            
+    except Exception as error:
+        logger.error(f"Error getting scenario config: {error}")
+        logger.info("Using default scenario due to error")
+        return DEFAULT_SCENARIO
+
+@xray_recorder.capture('get_scenario_timing')
+def get_scenario_timing(scenario_config: Dict[str, Any]) -> Dict[str, Any]:
+    """Calculate scenario timing information"""
+    try:
+        start_time = scenario_config.get('startTime')
+        if start_time:
+            start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+            elapsed_seconds = int((datetime.utcnow().replace(tzinfo=start_dt.tzinfo) - start_dt).total_seconds())
+        else:
+            elapsed_seconds = 0
+        
+        duration = scenario_config.get('duration', 300)
+        remaining_seconds = max(0, duration - elapsed_seconds)
+        
+        return {
+            'elapsed_seconds': elapsed_seconds,
+            'remaining_seconds': remaining_seconds,
+            'is_active': remaining_seconds > 0
+        }
+    except Exception as error:
+        logger.error(f"Error calculating scenario timing: {error}")
+        return {
+            'elapsed_seconds': 0,
+            'remaining_seconds': 300,
+            'is_active': True
+        }
+
 @xray_recorder.capture('get_api_key')
 def get_api_key() -> str:
     """Get API key from Secrets Manager"""
@@ -89,36 +154,78 @@ def get_random_float(min_val: float, max_val: float) -> float:
     """Get random float between min and max, rounded to 2 decimals"""
     return round(random.uniform(min_val, max_val), 2)
 
-def select_transaction_pattern() -> Dict[str, Any]:
-    """Select transaction pattern based on weighted probabilities"""
-    random_val = random.random() * 100
+def select_transaction_value_based_on_mix(transaction_mix: Dict[str, float]) -> float:
+    """Select transaction amount based on scenario mix"""
+    random_val = random.random()
     cumulative = 0
     
-    for pattern_name, config in TRANSACTION_PATTERNS.items():
-        cumulative += config['weight']
-        if random_val <= cumulative:
-            return {'name': pattern_name, **config}
+    # Low value transactions (< $100)
+    cumulative += transaction_mix.get('low_value', 0.7)
+    if random_val <= cumulative:
+        return get_random_float(5.0, 99.99)
     
-    return {'name': 'normal', **TRANSACTION_PATTERNS['normal']}
+    # Medium value transactions ($100-$1000)  
+    cumulative += transaction_mix.get('medium_value', 0.25)
+    if random_val <= cumulative:
+        return get_random_float(100.0, 999.99)
+    
+    # High value transactions (>$1000)
+    return get_random_float(1000.0, 10000.0)
 
-def generate_transaction_batch(pattern: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Generate batch of transactions based on pattern"""
-    transactions = []
-    user_id = get_random_element(SAMPLE_USERS)
+def generate_scenario_transaction(scenario_config: Dict[str, Any], special_features: Dict[str, bool]) -> Dict[str, Any]:
+    """Generate single transaction based on scenario configuration"""
     
-    # Generate multiple transactions for velocity-based patterns
-    for _ in range(pattern['velocity']):
-        transaction = {
-            'userId': user_id,
-            'amount': get_random_float(pattern['amount_range'][0], pattern['amount_range'][1]),
-            'currency': get_random_element(CURRENCIES),
-            'merchantId': get_random_element(SAMPLE_MERCHANTS),
-            'location': get_random_element(LOCATIONS)
-        }
-        
-        transactions.append(transaction)
+    # Select user pool based on scenario
+    if special_features.get('concentrate_users'):
+        user_pool = CONCENTRATED_USERS
+    else:
+        user_pool = NORMAL_USERS
     
-    return transactions
+    user_id = get_random_element(user_pool)
+    
+    # Get transaction value based on scenario mix
+    transaction_mix = get_transaction_mix(scenario_config)
+    amount = select_transaction_value_based_on_mix(transaction_mix)
+    
+    # Select location based on scenario
+    if special_features.get('high_risk_locations', 0) > 0 and random.random() < special_features['high_risk_locations']:
+        location = get_random_element(HIGH_RISK_LOCATIONS)
+    else:
+        location = get_random_element(LOCATIONS)
+    
+    # Generate suspicious amounts for fraud scenarios
+    if special_features.get('suspicious_amounts'):
+        suspicious_amounts = [999.99, 1000.00, 5000.00, 9999.99, 10000.00]
+        if random.random() < 0.3:  # 30% chance of suspicious amount
+            amount = get_random_element(suspicious_amounts)
+    
+    transaction = {
+        'userId': user_id,
+        'amount': amount,
+        'currency': get_random_element(CURRENCIES),
+        'merchantId': get_random_element(SAMPLE_MERCHANTS),
+        'location': location
+    }
+    
+    return transaction
+
+def calculate_transactions_to_generate(current_tps: int, last_run_time: float = None) -> int:
+    """Calculate how many transactions to generate based on TPS and time since last run"""
+    # Default to 5-minute interval if no last run time provided
+    time_interval = 5 * 60  # 5 minutes in seconds
+    
+    if last_run_time:
+        time_interval = min(time_interval, time.time() - last_run_time)
+    
+    # Calculate transactions needed for this interval
+    target_transactions = int(current_tps * time_interval / 60)  # TPS * minutes
+    
+    # Add some randomization to avoid perfectly regular patterns
+    variance = max(1, target_transactions // 4)  # 25% variance
+    actual_transactions = target_transactions + random.randint(-variance, variance)
+    
+    # Ensure we generate at least 1 transaction
+    return max(1, actual_transactions)
 
 @xray_recorder.capture('send_transaction')
 def send_transaction(transaction: Dict[str, Any], api_key: str) -> Dict[str, Any]:
@@ -143,36 +250,94 @@ def send_transaction(transaction: Dict[str, Any], api_key: str) -> Dict[str, Any
         logger.error(f"Request error: {error}")
         raise error
 
-@xray_recorder.capture('generate_transactions')
-def generate_transactions(api_key: str) -> int:
-    """Generate and send transactions"""
-    number_of_transactions = get_random_int(10, 30)  # Generate 10-30 transactions per invocation
+@xray_recorder.capture('generate_scenario_transactions')
+def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
+    """Generate and send transactions based on current scenario configuration"""
+    
+    # Get current scenario configuration
+    scenario_config = get_current_scenario()
+    scenario_timing = get_scenario_timing(scenario_config)
+    
+    # Get scenario info
+    scenario_name = scenario_config.get('scenario', 'normal')
+    elapsed_seconds = scenario_timing['elapsed_seconds']
+    
+    # Calculate current TPS based on scenario and timing
+    current_tps = calculate_current_tps(scenario_config, elapsed_seconds)
+    
+    # Calculate how many transactions to generate
+    number_of_transactions = calculate_transactions_to_generate(current_tps)
+    
+    # Get special features for this scenario
+    special_features = should_use_special_features(scenario_config)
+    
+    # Check for demo callouts
+    demo_callout = get_demo_callout(scenario_config, elapsed_seconds)
+    
+    logger.info(f"Scenario '{scenario_name}' - TPS: {current_tps}, "
+                f"Generating: {number_of_transactions} transactions, "
+                f"Elapsed: {elapsed_seconds}s, Remaining: {scenario_timing['remaining_seconds']}s")
+    
+    if demo_callout:
+        logger.info(f"Demo callout: {demo_callout}")
+    
+    # Check if scenario is still active
+    if not scenario_timing['is_active']:
+        logger.info(f"Scenario '{scenario_name}' has expired, switching to normal")
+        # Could automatically reset to normal here, but for demos we'll just log it
+        number_of_transactions = 2  # Generate minimal transactions when expired
+    
     successful_count = 0
     failed_count = 0
     
+    # Generate transactions based on scenario
     for i in range(number_of_transactions):
         try:
-            pattern = select_transaction_pattern()
-            transactions = generate_transaction_batch(pattern)
+            transaction = generate_scenario_transaction(scenario_config, special_features)
             
-            for transaction in transactions:
-                try:
-                    send_transaction(transaction, api_key)
-                    successful_count += 1
+            # For velocity scenarios, occasionally generate multiple transactions from same user
+            if special_features.get('velocity_patterns') and random.random() < 0.3:
+                # Generate 1-3 additional transactions from same user
+                for _ in range(random.randint(1, 3)):
+                    velocity_transaction = generate_scenario_transaction(scenario_config, special_features)
+                    velocity_transaction['userId'] = transaction['userId']  # Same user
                     
-                    # Add small delay between requests to avoid overwhelming the system
-                    time.sleep(random.uniform(0.1, 0.5))
-                    
-                except Exception as error:
-                    logger.error(f"Failed to send transaction: {error}")
-                    failed_count += 1
-                    
+                    try:
+                        send_transaction(velocity_transaction, api_key)
+                        successful_count += 1
+                        time.sleep(random.uniform(0.1, 0.3))  # Quick succession
+                    except Exception as error:
+                        logger.error(f"Failed to send velocity transaction: {error}")
+                        failed_count += 1
+            
+            # Send the main transaction
+            send_transaction(transaction, api_key)
+            successful_count += 1
+            
+            # Variable delay based on scenario predictability
+            if special_features.get('predictable_patterns'):
+                delay = 60 / max(current_tps, 1)  # More predictable timing
+            else:
+                delay = random.uniform(0.1, 0.8)  # Random delay
+                
+            time.sleep(delay)
+                
         except Exception as error:
-            logger.error(f"Error generating transaction batch {i}: {error}")
+            logger.error(f"Error generating transaction {i}: {error}")
             failed_count += 1
     
-    logger.info(f"Transaction results: {successful_count} successful, {failed_count} failed")
-    return successful_count
+    result = {
+        'successful_count': successful_count,
+        'failed_count': failed_count,
+        'scenario': scenario_name,
+        'current_tps': current_tps,
+        'elapsed_seconds': elapsed_seconds,
+        'remaining_seconds': scenario_timing['remaining_seconds'],
+        'demo_callout': demo_callout
+    }
+    
+    logger.info(f"Scenario transaction results: {successful_count} successful, {failed_count} failed")
+    return result
 
 @xray_recorder.capture('seed_fraud_rules')
 def seed_fraud_rules():
@@ -225,29 +390,29 @@ def seed_fraud_rules():
             {
                 'ruleId': 'velocity-check-high',
                 'ruleType': 'VELOCITY_CHECK',
-                'threshold': 10,
+                'threshold': 15,
                 'penalty': 35,
                 'action': 'FLAG',
                 'priority': 1,
-                'description': 'Flag users with more than 10 transactions per hour'
+                'description': 'Flag users with more than 15 transactions per hour'
             },
             {
                 'ruleId': 'velocity-check-medium',
                 'ruleType': 'VELOCITY_CHECK',
-                'threshold': 5,
+                'threshold': 8,
                 'penalty': 20,
                 'action': 'REVIEW',
                 'priority': 2,
-                'description': 'Review users with more than 5 transactions per hour'
+                'description': 'Review users with more than 8 transactions per hour'
             },
             {
                 'ruleId': 'velocity-check-low',
                 'ruleType': 'VELOCITY_CHECK',
-                'threshold': 3,
+                'threshold': 5,
                 'penalty': 10,
                 'action': 'MONITOR',
                 'priority': 3,
-                'description': 'Monitor users with more than 3 transactions per hour'
+                'description': 'Monitor users with more than 5 transactions per hour'
             },
             {
                 'ruleId': 'location-risk-unknown',
@@ -292,6 +457,42 @@ def seed_fraud_rules():
         # Don't fail the entire seeding process if fraud rules fail
         return 0
 
+def select_transaction_pattern() -> str:
+    """Select a transaction pattern for seeding"""
+    patterns = ['normal', 'high_value', 'suspicious']
+    weights = [70, 20, 10]  # Weighted selection
+    return random.choices(patterns, weights=weights)[0]
+
+def generate_transaction_batch(pattern: str) -> List[Dict[str, Any]]:
+    """Generate a batch of transactions based on pattern"""
+    batch = []
+    pattern_config = TRANSACTION_PATTERNS.get(pattern, TRANSACTION_PATTERNS['normal'])
+    
+    # Generate 1-3 transactions based on velocity
+    num_transactions = random.randint(1, pattern_config.get('velocity', 1))
+    
+    for _ in range(num_transactions):
+        user_id = get_random_element(SAMPLE_USERS)
+        amount_range = pattern_config['amount_range']
+        amount = get_random_float(amount_range[0], amount_range[1])
+        
+        transaction = {
+            'userId': user_id,
+            'amount': amount,
+            'currency': get_random_element(CURRENCIES),
+            'merchantId': get_random_element(SAMPLE_MERCHANTS),
+            'location': get_random_element(LOCATIONS)
+        }
+        
+        # Add suspicious patterns for fraud testing
+        if pattern == 'fraudulent':
+            transaction['location'] = get_random_element(HIGH_RISK_LOCATIONS)
+            transaction['amount'] = get_random_element([9999.99, 10000.00, 15000.00])
+        
+        batch.append(transaction)
+    
+    return batch
+
 @xray_recorder.capture('generate_seed_data')
 def generate_seed_data(api_key: str) -> int:
     """Generate a larger batch of initial transactions"""
@@ -332,32 +533,39 @@ def generate_seed_data(api_key: str) -> int:
 
 @xray_recorder.capture('lambda_handler')
 def handler(event, context):
-    """Lambda handler function"""
-    logger.info('Data generator started')
+    """Lambda handler function - enhanced for scenario-based generation"""
+    logger.info('Scenario-aware data generator started')
     
     try:
         # Get API key from Secrets Manager
         api_key = get_api_key()
         
-        # Generate and send transactions
-        transactions_generated = generate_transactions(api_key)
+        # Generate and send transactions based on current scenario
+        result = generate_scenario_transactions(api_key)
         
-        logger.info(f"Successfully generated {transactions_generated} transactions")
+        logger.info(f"Scenario generation completed: {result}")
         
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'message': f'Generated {transactions_generated} transactions',
+                'message': f"Scenario '{result['scenario']}': {result['successful_count']} transactions generated",
+                'scenario': result['scenario'],
+                'successful_count': result['successful_count'],
+                'failed_count': result['failed_count'],
+                'current_tps': result['current_tps'],
+                'elapsed_seconds': result['elapsed_seconds'],
+                'remaining_seconds': result['remaining_seconds'],
+                'demo_callout': result.get('demo_callout'),
                 'timestamp': datetime.utcnow().isoformat()
-            })
+            }, default=str)
         }
         
     except Exception as error:
-        logger.error(f"Error in data generator: {error}")
+        logger.error(f"Error in scenario data generator: {error}")
         return {
             'statusCode': 500,
             'body': json.dumps({
-                'error': 'Failed to generate transactions',
+                'error': 'Failed to generate scenario transactions',
                 'message': str(error)
             })
         }

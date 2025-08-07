@@ -2,21 +2,36 @@ import json
 import uuid
 import boto3
 import os
+import time
+import random
 from datetime import datetime
 from typing import Dict, Any, Optional
+from decimal import Decimal
 from aws_xray_sdk.core import xray_recorder
 from aws_xray_sdk.core import patch_all
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure logging for Lambda
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 # Patch all AWS SDK calls for X-Ray tracing
 patch_all()
 
-# Initialize AWS clients
-dynamodb = boto3.resource('dynamodb')
+# Initialize AWS clients with retry configuration
+from botocore.config import Config
+from botocore.exceptions import ClientError
+
+# Configure boto3 with custom retry settings for throttling scenarios
+retry_config = Config(
+    retries={
+        'max_attempts': 5,
+        'mode': 'adaptive',
+        'total_max_attempts': 8
+    }
+)
+
+dynamodb = boto3.resource('dynamodb', config=retry_config)
 lambda_client = boto3.client('lambda')
 sqs_client = boto3.client('sqs')
 cloudwatch_client = boto3.client('cloudwatch')
@@ -30,6 +45,18 @@ FRAUD_FUNCTION_NAME = os.environ['LAMBDA_FRAUD_FUNCTION_NAME']
 # Get DynamoDB table references
 transactions_table = dynamodb.Table(TRANSACTIONS_TABLE)
 fraud_rules_table = dynamodb.Table(FRAUD_RULES_TABLE)
+
+def convert_floats_to_decimal(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert float values to Decimal for DynamoDB storage"""
+    converted_data = {}
+    for key, value in data.items():
+        if isinstance(value, float):
+            converted_data[key] = Decimal(str(value))
+        elif isinstance(value, dict):
+            converted_data[key] = convert_floats_to_decimal(value)
+        else:
+            converted_data[key] = value
+    return converted_data
 
 def validate_transaction_data(data: Dict[str, Any]) -> tuple[bool, Optional[str]]:
     """Validate transaction request data"""
@@ -99,15 +126,74 @@ def apply_business_rules(transaction: Dict[str, Any], fraud_result: Dict[str, An
 
     return 'APPROVED'
 
-@xray_recorder.capture('store_transaction')
+@xray_recorder.capture('store_transaction_with_retry')
 def store_transaction(transaction: Dict[str, Any]) -> None:
-    """Store transaction in DynamoDB"""
+    """Store transaction in DynamoDB with throttling handling"""
+    correlation_id = transaction.get('correlationId', 'unknown')
+    retry_count = 0
+    max_retries = 3
+    base_delay = 0.1  # 100ms base delay
+    
+    # Convert floats to Decimal for DynamoDB
+    transaction_for_storage = convert_floats_to_decimal(transaction)
+    
+    while retry_count <= max_retries:
+        try:
+            transactions_table.put_item(Item=transaction_for_storage)
+            
+            if retry_count > 0:
+                logger.info(f"[{correlation_id}] Transaction stored after {retry_count} retries")
+                send_throttling_metric('DynamoDBRetrySuccess', 1, correlation_id)
+            else:
+                logger.info(f"[{correlation_id}] Transaction stored successfully")
+            
+            return
+            
+        except ClientError as error:
+            error_code = error.response['Error']['Code']
+            
+            if error_code == 'ProvisionedThroughputExceededException':
+                retry_count += 1
+                send_throttling_metric('DynamoDBThrottling', 1, correlation_id)
+                
+                if retry_count <= max_retries:
+                    # Exponential backoff with jitter
+                    delay = base_delay * (2 ** retry_count) + random.uniform(0, 0.1)
+                    logger.warning(f"[{correlation_id}] DynamoDB throttling detected, retry {retry_count}/{max_retries} after {delay:.2f}s")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"[{correlation_id}] DynamoDB throttling: max retries exhausted")
+                    send_throttling_metric('DynamoDBRetryExhausted', 1, correlation_id)
+                    raise DynamoDBThrottlingError(f"DynamoDB throttling after {max_retries} retries")
+            else:
+                logger.error(f"[{correlation_id}] DynamoDB error: {error_code} - {error}")
+                raise
+                
+        except Exception as error:
+            logger.error(f"[{correlation_id}] Unexpected error storing transaction: {error}")
+            raise
+
+class DynamoDBThrottlingError(Exception):
+    """Custom exception for DynamoDB throttling scenarios"""
+    pass
+
+def send_throttling_metric(metric_name: str, value: float, correlation_id: str) -> None:
+    """Send throttling-specific metrics to CloudWatch"""
     try:
-        transactions_table.put_item(Item=transaction)
-        logger.info(f"[{transaction['correlationId']}] Transaction stored in database")
+        cloudwatch_client.put_metric_data(
+            Namespace='TransactionProcessing/Throttling',
+            MetricData=[{
+                'MetricName': metric_name,
+                'Value': value,
+                'Unit': 'Count',
+                'Timestamp': datetime.utcnow(),
+                'Dimensions': [
+                    {'Name': 'Service', 'Value': 'TransactionService'}
+                ]
+            }]
+        )
     except Exception as error:
-        logger.error(f"[{transaction['correlationId']}] Failed to store transaction: {error}")
-        raise
+        logger.error(f"[{correlation_id}] Failed to send throttling metric {metric_name}: {error}")
 
 @xray_recorder.capture('send_notification')
 def send_notification(transaction: Dict[str, Any]) -> None:
@@ -166,7 +252,7 @@ def send_metrics(transaction: Dict[str, Any], processing_time: float) -> None:
                 'Unit': 'Count',
                 'Dimensions': [
                     {'Name': 'Status', 'Value': transaction['status']},
-                    {'Name': 'RiskLevel', 'Value': transaction.get('riskLevel', 'UNKNOWN')}
+                    {'Name': 'RiskLevel', 'Value': str(transaction.get('riskLevel', 'UNKNOWN'))}
                 ]
             },
             {
@@ -179,7 +265,7 @@ def send_metrics(transaction: Dict[str, Any], processing_time: float) -> None:
             },
             {
                 'MetricName': 'TransactionAmount',
-                'Value': transaction['amount'],
+                'Value': float(transaction['amount']),  # Convert Decimal back to float for CloudWatch
                 'Unit': 'None',
                 'Dimensions': [
                     {'Name': 'Currency', 'Value': transaction['currency']},
@@ -271,8 +357,20 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
         transaction_data['riskScore'] = fraud_result.get('riskScore')
         transaction_data['riskLevel'] = fraud_result.get('riskLevel')
 
-        # Store transaction in DynamoDB
-        store_transaction(transaction_data)
+        # Store transaction in DynamoDB with throttling handling
+        try:
+            store_transaction(transaction_data)
+        except DynamoDBThrottlingError as throttling_error:
+            logger.error(f"[{correlation_id}] Transaction failed due to DynamoDB throttling: {throttling_error}")
+            send_throttling_metric('TransactionThrottled', 1, correlation_id)
+            
+            return create_response(503, {
+                'error': 'Service Unavailable',
+                'reason': 'Database temporarily unavailable due to high load',
+                'correlationId': correlation_id,
+                'retry_after': '30',  # Suggest client retry after 30 seconds
+                'transactionId': transaction_data['transactionId']
+            })
 
         # Send notification to SQS if needed
         send_notification(transaction_data)
@@ -292,10 +390,30 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
         if transaction_data['status'] == 'DECLINED':
             response['reason'] = get_rejection_reason(fraud_result)
 
-        logger.info(f"[{correlation_id}] Transaction completed: {json.dumps(response)}")
+        # Log transaction completion with detailed info for flow visualization
+        flow_data = {
+            'correlationId': correlation_id,
+            'status': transaction_data['status'], 
+            'riskLevel': str(transaction_data.get('riskLevel', 'UNKNOWN')),
+            'amount': str(transaction_data['amount']),
+            'userId': transaction_data['userId'],
+            'transactionId': transaction_data['transactionId']
+        }
+        logger.info(f"[{correlation_id}] Transaction completed: {json.dumps(flow_data)}")
         
         status_code = 201 if transaction_data['status'] == 'APPROVED' else 402
         return create_response(status_code, response)
+
+    except DynamoDBThrottlingError as throttling_error:
+        logger.error(f"[{correlation_id}] Transaction failed due to DynamoDB throttling: {throttling_error}")
+        send_throttling_metric('TransactionThrottled', 1, correlation_id)
+        
+        return create_response(503, {
+            'error': 'Service Unavailable', 
+            'reason': 'Database temporarily unavailable due to high load',
+            'correlationId': correlation_id,
+            'retry_after': '30'
+        })
 
     except Exception as error:
         logger.error(f"[{correlation_id}] Error processing transaction: {error}")

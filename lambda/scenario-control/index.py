@@ -1,0 +1,399 @@
+import json
+import boto3
+import os
+import time
+from datetime import datetime, timedelta
+from typing import Dict, Any, List
+from aws_xray_sdk.core import xray_recorder
+from aws_xray_sdk.core import patch_all
+import logging
+
+# Configure logging for Lambda
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Patch all AWS SDK calls for X-Ray tracing
+patch_all()
+
+# Initialize AWS clients
+dynamodb = boto3.resource('dynamodb')
+logs_client = boto3.client('logs')
+
+# Environment variables
+SCENARIO_CONFIG_TABLE = os.environ['SCENARIO_CONFIG_TABLE']
+
+# Get DynamoDB table reference
+scenario_table = dynamodb.Table(SCENARIO_CONFIG_TABLE)
+
+# Default scenario configuration
+DEFAULT_SCENARIO = {
+    'configId': 'current',
+    'scenario': 'normal',
+    'tps': 12,
+    'duration': 300,
+    'pattern': {
+        'type': 'steady'
+    },
+    'lastUpdated': datetime.utcnow().isoformat()
+}
+
+PREDEFINED_SCENARIOS = {
+    'normal': {
+        'scenario': 'normal',
+        'tps': 12,
+        'duration': 300,
+        'pattern': {'type': 'steady'},
+        'description': 'Normal steady traffic (12 transactions per minute)'
+    },
+    'demo_throttling': {
+        'scenario': 'demo_throttling',
+        'tps': 60,
+        'duration': 150,
+        'pattern': {
+            'type': 'curve',
+            'phases': [
+                {'duration': 30, 'tps': 12},   # Normal baseline
+                {'duration': 30, 'tps': 60},   # Ramp up to throttle
+                {'duration': 60, 'tps': 60},   # Sustained throttling
+                {'duration': 30, 'tps': 12}    # Recovery
+            ]
+        },
+        'description': 'DynamoDB throttling demonstration (60 transactions per minute)',
+        'demo_callouts': {
+            '30': 'Notice normal healthy metrics at 12 TPM',
+            '60': 'DynamoDB throttling begins at 60 TPM - watch for 503 errors',
+            '120': 'System shows retry logic and recovery patterns',
+            '150': 'Back to normal operations at 12 TPM'
+        }
+    }
+}
+
+@xray_recorder.capture('get_transaction_flow')
+def get_transaction_flow() -> Dict[str, Any]:
+    """Get recent transaction flow using CloudWatch Logs Insights"""
+    try:
+        # Calculate time range for last 5 minutes
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(minutes=5)
+        
+        # CloudWatch Logs Insights query - search for transaction logs
+        query_string = """
+        fields @timestamp, @message
+        | filter @message like /correlationId/ and @message like /status/ and @message like /riskLevel/
+        | sort @timestamp desc
+        | limit 10
+        """
+        
+        # Find the transaction service log group dynamically
+        log_groups_response = logs_client.describe_log_groups(
+            logGroupNamePrefix='AgenticDemoAppStack-TransactionServiceLogGroup'
+        )
+        
+        transaction_log_group = None
+        if log_groups_response['logGroups']:
+            transaction_log_group = log_groups_response['logGroups'][0]['logGroupName']
+        else:
+            logger.error("Transaction service log group not found")
+            return {
+                'transactions': [],
+                'query_status': 'error',
+                'message': 'Transaction service log group not found',
+                'total_found': 0
+            }
+        
+        # Start the query
+        response = logs_client.start_query(
+            logGroupName=transaction_log_group,
+            startTime=int(start_time.timestamp()),
+            endTime=int(end_time.timestamp()),
+            queryString=query_string
+        )
+        
+        query_id = response['queryId']
+        
+        # Poll for results (with timeout)
+        max_attempts = 30
+        attempt = 0
+        
+        while attempt < max_attempts:
+            result = logs_client.get_query_results(queryId=query_id)
+            
+            if result['status'] == 'Complete':
+                # Process results
+                transactions = []
+                for row in result['results']:
+                    # Convert CloudWatch Logs result format to dict
+                    row_data = {}
+                    for field in row:
+                        row_data[field['field']] = field['value']
+                    
+                    # Extract transaction info from log message
+                    message = row_data.get('@message', '')
+                    timestamp = row_data.get('@timestamp', '')
+                    
+                    # Parse JSON data from the log message
+                    try:
+                        import re
+                        # Look for JSON pattern in the log message
+                        json_match = re.search(r'\{[^}]*"correlationId"[^}]*\}', message)
+                        if json_match:
+                            import json
+                            transaction_data = json.loads(json_match.group())
+                            
+                            transactions.append({
+                                'id': transaction_data.get('correlationId', 'unknown')[-8:],  # Last 8 chars
+                                'status': transaction_data.get('status', 'UNKNOWN'),
+                                'riskLevel': transaction_data.get('riskLevel', 'N/A'),
+                                'amount': transaction_data.get('amount', '0'),
+                                'userId': transaction_data.get('userId', 'unknown'),
+                                'timestamp': timestamp[:19] if timestamp else ''  # YYYY-MM-DD HH:MM:SS
+                            })
+                    except Exception as parse_error:
+                        logger.warning(f"Failed to parse transaction data from log: {parse_error}")
+                        continue
+                
+                return {
+                    'transactions': transactions,
+                    'query_status': 'success',
+                    'total_found': len(transactions),
+                    'time_range': {
+                        'start': start_time.isoformat(),
+                        'end': end_time.isoformat()
+                    }
+                }
+                
+            elif result['status'] == 'Failed':
+                logger.error(f"CloudWatch query failed: {result}")
+                break
+                
+            # Wait before checking again
+            time.sleep(0.5)
+            attempt += 1
+        
+        # Query timeout or failed
+        return {
+            'transactions': [],
+            'query_status': 'timeout',
+            'message': 'CloudWatch query timed out or failed',
+            'total_found': 0
+        }
+        
+    except Exception as error:
+        logger.error(f"Error getting transaction flow: {error}")
+        return {
+            'transactions': [],
+            'query_status': 'error',
+            'message': str(error),
+            'total_found': 0
+        }
+
+@xray_recorder.capture('get_current_scenario')
+def get_current_scenario() -> Dict[str, Any]:
+    """Get current scenario configuration from DynamoDB"""
+    try:
+        response = scenario_table.get_item(
+            Key={'configId': 'current'}
+        )
+        
+        if 'Item' in response:
+            return response['Item']
+        else:
+            # Initialize with default scenario if not exists
+            scenario_table.put_item(Item=DEFAULT_SCENARIO)
+            return DEFAULT_SCENARIO
+            
+    except Exception as error:
+        logger.error(f"Error getting current scenario: {error}")
+        return DEFAULT_SCENARIO
+
+@xray_recorder.capture('set_scenario')
+def set_scenario(scenario_name: str, custom_config: Dict[str, Any] = None) -> Dict[str, Any]:
+    """Set current scenario configuration"""
+    try:
+        if scenario_name in PREDEFINED_SCENARIOS:
+            config = PREDEFINED_SCENARIOS[scenario_name].copy()
+        else:
+            config = custom_config or DEFAULT_SCENARIO
+        
+        # Add metadata
+        config['configId'] = 'current'
+        config['lastUpdated'] = datetime.utcnow().isoformat()
+        config['startTime'] = datetime.utcnow().isoformat()
+        
+        # Store in DynamoDB
+        scenario_table.put_item(Item=config)
+        
+        logger.info(f"Scenario set to: {scenario_name}")
+        return {
+            'status': 'success',
+            'scenario': config,
+            'message': f'Scenario changed to {scenario_name}'
+        }
+        
+    except Exception as error:
+        logger.error(f"Error setting scenario {scenario_name}: {error}")
+        return {
+            'status': 'error',
+            'message': str(error)
+        }
+
+@xray_recorder.capture('get_scenario_status')
+def get_scenario_status() -> Dict[str, Any]:
+    """Get current scenario status with timing information"""
+    try:
+        current = get_current_scenario()
+        
+        # Calculate elapsed time if scenario has start time
+        elapsed_seconds = 0
+        if 'startTime' in current:
+            start_time = datetime.fromisoformat(current['startTime'].replace('Z', '+00:00'))
+            elapsed_seconds = int((datetime.utcnow().replace(tzinfo=start_time.tzinfo) - start_time).total_seconds())
+        
+        # Determine current phase for curve patterns
+        current_phase = None
+        time_remaining = current.get('duration', 0) - elapsed_seconds
+        
+        if current.get('pattern', {}).get('type') == 'curve':
+            phases = current['pattern'].get('phases', [])
+            phase_start = 0
+            for i, phase in enumerate(phases):
+                phase_duration = phase.get('duration', 0)
+                if phase_start <= elapsed_seconds < phase_start + phase_duration:
+                    current_phase = {
+                        'index': i,
+                        'name': phase.get('name', f'phase_{i}'),
+                        'tps': phase.get('tps'),
+                        'phase_remaining': phase_start + phase_duration - elapsed_seconds
+                    }
+                    break
+                phase_start += phase_duration
+        
+        # Check for demo callouts
+        demo_tip = None
+        callouts = current.get('demo_callouts', {})
+        for time_key, tip in callouts.items():
+            if elapsed_seconds >= int(time_key) and elapsed_seconds < int(time_key) + 30:
+                demo_tip = tip
+                break
+        
+        return {
+            'current_scenario': current.get('scenario', 'unknown'),
+            'description': current.get('description', ''),
+            'elapsed_seconds': elapsed_seconds,
+            'time_remaining': max(0, time_remaining),
+            'current_phase': current_phase,
+            'demo_tip': demo_tip,
+            'config': current
+        }
+        
+    except Exception as error:
+        logger.error(f"Error getting scenario status: {error}")
+        return {
+            'current_scenario': 'error',
+            'message': str(error)
+        }
+
+@xray_recorder.capture('reset_scenario')
+def reset_scenario() -> Dict[str, Any]:
+    """Reset to normal scenario"""
+    return set_scenario('normal')
+
+@xray_recorder.capture('list_scenarios')
+def list_scenarios() -> Dict[str, Any]:
+    """List all available predefined scenarios"""
+    scenarios = []
+    for name, config in PREDEFINED_SCENARIOS.items():
+        scenarios.append({
+            'name': name,
+            'description': config.get('description', ''),
+            'tps': config.get('tps'),
+            'duration': config.get('duration'),
+            'pattern_type': config.get('pattern', {}).get('type')
+        })
+    
+    return {
+        'scenarios': scenarios,
+        'current': get_current_scenario().get('scenario', 'unknown')
+    }
+
+def create_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
+    """Create API Gateway response"""
+    return {
+        'statusCode': status_code,
+        'headers': {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, X-Amz-Date, Authorization, X-Api-Key'
+        },
+        'body': json.dumps(body, default=str)
+    }
+
+@xray_recorder.capture('lambda_handler')
+def handler(event, context):
+    """Lambda handler for scenario control API"""
+    logger.info(f"Scenario control request: {json.dumps(event)}")
+    
+    try:
+        # Extract HTTP method and path
+        method = 'GET'
+        path = '/demo/scenario'
+        body = {}
+        
+        if 'requestContext' in event and 'http' in event['requestContext']:
+            # API Gateway v2.0
+            method = event['requestContext']['http']['method']
+            path = event['requestContext']['http']['path']
+            body = json.loads(event.get('body', '{}')) if event.get('body') else {}
+        elif 'requestContext' in event:
+            # API Gateway v1.0
+            method = event.get('httpMethod', 'GET')
+            path = event.get('path', '/demo/scenario')
+            body = json.loads(event.get('body', '{}')) if event.get('body') else {}
+        
+        logger.info(f"Processing {method} {path}")
+        
+        # Route handling
+        if path == '/demo/scenario' and method == 'GET':
+            # Get current scenario
+            return create_response(200, get_current_scenario())
+            
+        elif path == '/demo/scenario' and method == 'POST':
+            # Set scenario
+            scenario_name = body.get('scenario')
+            custom_config = body.get('config')
+            
+            if not scenario_name:
+                return create_response(400, {'error': 'scenario parameter required'})
+            
+            result = set_scenario(scenario_name, custom_config)
+            status_code = 200 if result['status'] == 'success' else 400
+            return create_response(status_code, result)
+            
+        elif path == '/demo/status' and method == 'GET':
+            # Get scenario status with timing
+            return create_response(200, get_scenario_status())
+            
+        elif path == '/demo/reset' and method == 'POST':
+            # Reset to normal
+            result = reset_scenario()
+            status_code = 200 if result['status'] == 'success' else 400
+            return create_response(status_code, result)
+            
+        elif path == '/demo/scenarios' and method == 'GET':
+            # List available scenarios
+            return create_response(200, list_scenarios())
+            
+        elif path == '/demo/flow' and method == 'GET':
+            # Get transaction flow from CloudWatch Logs
+            return create_response(200, get_transaction_flow())
+        
+        # Route not found
+        return create_response(404, {'error': 'Route not found'})
+        
+    except Exception as error:
+        logger.error(f"Error in scenario control: {error}")
+        return create_response(500, {
+            'error': 'Internal server error',
+            'message': str(error)
+        })
