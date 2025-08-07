@@ -28,7 +28,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         name: 'timestamp',
         type: dynamodb.AttributeType.STRING
       },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, // Pay per request for demo
+      billingMode: dynamodb.BillingMode.PROVISIONED,
+      readCapacity: 5,   // Low capacity to enable throttling for demo
+      writeCapacity: 5,  // Low capacity to enable throttling for demo
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
@@ -47,6 +49,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         name: 'timestamp',
         type: dynamodb.AttributeType.STRING
       },
+      readCapacity: 5,   // Low capacity to enable throttling for demo
+      writeCapacity: 5,  // Low capacity to enable throttling for demo
     });
 
     // Fraud Rules Table
@@ -56,7 +60,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         name: 'ruleId',
         type: dynamodb.AttributeType.STRING
       },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      billingMode: dynamodb.BillingMode.PROVISIONED,
+      readCapacity: 5,   // Low capacity to enable throttling for demo
+      writeCapacity: 5,  // Low capacity to enable throttling for demo
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
