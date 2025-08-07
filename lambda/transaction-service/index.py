@@ -22,12 +22,12 @@ patch_all()
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-# Configure boto3 with custom retry settings for throttling scenarios
+# Configure boto3 with minimal retry settings to surface throttling exceptions
 retry_config = Config(
     retries={
-        'max_attempts': 5,
-        'mode': 'adaptive',
-        'total_max_attempts': 8
+        'max_attempts': 2,
+        'mode': 'standard',
+        'total_max_attempts': 2
     }
 )
 
@@ -131,7 +131,7 @@ def store_transaction(transaction: Dict[str, Any]) -> None:
     """Store transaction in DynamoDB with throttling handling"""
     correlation_id = transaction.get('correlationId', 'unknown')
     retry_count = 0
-    max_retries = 3
+    max_retries = 1  # Minimal retries to surface throttling exceptions
     base_delay = 0.1  # 100ms base delay
     
     # Convert floats to Decimal for DynamoDB

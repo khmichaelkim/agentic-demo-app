@@ -3,6 +3,7 @@ import boto3
 import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
+from decimal import Decimal
 from aws_xray_sdk.core import xray_recorder
 from aws_xray_sdk.core import patch_all
 import logging
@@ -26,6 +27,12 @@ RISK_THRESHOLD_MEDIUM = float(os.environ.get('RISK_THRESHOLD_MEDIUM', '50'))
 # Get DynamoDB table references
 fraud_rules_table = dynamodb.Table(FRAUD_RULES_TABLE)
 transactions_table = dynamodb.Table(TRANSACTIONS_TABLE)
+
+def decimal_default(obj):
+    """JSON serializer for Decimal objects"""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError
 
 @xray_recorder.capture('get_fraud_rules')
 def get_fraud_rules() -> List[Dict[str, Any]]:
@@ -196,7 +203,7 @@ def determine_risk_level(risk_score: int) -> str:
 @xray_recorder.capture('lambda_handler')
 def handler(event, context):
     """Lambda handler function"""
-    logger.info(f"Fraud detection request: {json.dumps(event)}")
+    logger.info(f"Fraud detection request: {json.dumps(event, default=decimal_default)}")
 
     try:
         transaction = event
@@ -225,7 +232,7 @@ def handler(event, context):
             'correlationId': transaction.get('correlationId')
         }
 
-        logger.info(f"Fraud detection response: {json.dumps(response)}")
+        logger.info(f"Fraud detection response: {json.dumps(response, default=decimal_default)}")
         return response
 
     except Exception as error:

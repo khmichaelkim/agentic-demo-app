@@ -47,21 +47,21 @@ PREDEFINED_SCENARIOS = {
     },
     'demo_throttling': {
         'scenario': 'demo_throttling',
-        'tps': 60,
+        'tps': 180,
         'duration': 150,
         'pattern': {
             'type': 'curve',
             'phases': [
                 {'duration': 30, 'tps': 12},   # Normal baseline
-                {'duration': 30, 'tps': 60},   # Ramp up to throttle
-                {'duration': 60, 'tps': 60},   # Sustained throttling
+                {'duration': 30, 'tps': 180},  # Ramp up to throttle
+                {'duration': 60, 'tps': 180},  # Sustained throttling
                 {'duration': 30, 'tps': 12}    # Recovery
             ]
         },
-        'description': 'DynamoDB throttling demonstration (60 transactions per minute)',
+        'description': 'DynamoDB throttling demonstration (180 transactions per minute)',
         'demo_callouts': {
             '30': 'Notice normal healthy metrics at 12 TPM',
-            '60': 'DynamoDB throttling begins at 60 TPM - watch for 503 errors',
+            '60': 'DynamoDB throttling begins at 180 TPM - watch for 503 errors',
             '120': 'System shows retry logic and recovery patterns',
             '150': 'Back to normal operations at 12 TPM'
         }

@@ -30,8 +30,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         type: dynamodb.AttributeType.STRING
       },
       billingMode: dynamodb.BillingMode.PROVISIONED,
-      readCapacity: 5,   // Low capacity to enable throttling for demo
-      writeCapacity: 5,  // Low capacity to enable throttling for demo
+      readCapacity: 1,   // Extremely low capacity to guarantee throttling exceptions
+      writeCapacity: 1,  // Extremely low capacity to guarantee throttling exceptions
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
@@ -50,8 +50,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         name: 'timestamp',
         type: dynamodb.AttributeType.STRING
       },
-      readCapacity: 5,   // Low capacity to enable throttling for demo
-      writeCapacity: 5,  // Low capacity to enable throttling for demo
+      readCapacity: 10,  // Higher capacity so fraud detection velocity checks don't throttle
+      writeCapacity: 5,  // Higher capacity for GSI writes (maintained by DynamoDB)
     });
 
     // Fraud Rules Table
@@ -62,8 +62,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         type: dynamodb.AttributeType.STRING
       },
       billingMode: dynamodb.BillingMode.PROVISIONED,
-      readCapacity: 5,   // Low capacity to enable throttling for demo
-      writeCapacity: 5,  // Low capacity to enable throttling for demo
+      readCapacity: 10,   // Higher capacity to handle fraud rule scans without throttling
+      writeCapacity: 5,   // Higher capacity since fraud rules are written once during seeding
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
@@ -124,6 +124,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         RISK_THRESHOLD_HIGH: '80',
         RISK_THRESHOLD_MEDIUM: '50',
         AWS_XRAY_TRACING_NAME: 'fraud-detection-service',
+        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
       },
       logGroup: new logs.LogGroup(this, 'FraudDetectionLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
@@ -151,6 +152,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         SQS_QUEUE_URL: notificationQueue.queueUrl,
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
         AWS_XRAY_TRACING_NAME: 'transaction-service',
+        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
       },
       logGroup: new logs.LogGroup(this, 'TransactionServiceLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
@@ -171,6 +173,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       environment: {
         SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
         AWS_XRAY_TRACING_NAME: 'scenario-control',
+        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
       },
       logGroup: new logs.LogGroup(this, 'ScenarioControlLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
@@ -241,12 +244,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
     const usagePlan = api.addUsagePlan('TransactionUsagePlan', {
       name: 'transaction-usage-plan',
       description: 'Usage plan for transaction processing API',
-      throttle: {
-        rateLimit: 10, // 10 requests per second as specified in plan
-        burstLimit: 20,
-      },
+      // Temporarily removed throttling to restore service after demo
       quota: {
-        limit: 10000, // 10,000 requests per month
+        limit: 1000000, // Increased to 1,000,000 requests per month for heavy demo usage
         period: apigateway.Period.MONTH,
       },
       apiStages: [{
@@ -667,6 +667,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         API_GATEWAY_URL: api.url,
         API_KEY_SECRET_ARN: apiKeySecret.secretArn,
         SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
+        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
       },
       logGroup: new logs.LogGroup(this, 'DataGeneratorLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
@@ -705,6 +706,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         FRAUD_RULES_TABLE: fraudRulesTable.tableName,
         SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
         SEED_MODE: 'true',
+        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
       },
       logGroup: new logs.LogGroup(this, 'SeedDataLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
