@@ -1,0 +1,2 @@
+# No additional requirements - uses shared PythonDependencyLayer
+# aws-xray-sdk and requests are provided by the layer

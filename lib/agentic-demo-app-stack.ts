@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
@@ -490,6 +491,34 @@ export class AgenticDemoAppStack extends cdk.Stack {
     apiKeySecret.grantRead(seedDataFunction);
     fraudRulesTable.grantReadWriteData(seedDataFunction);
 
+    // Notification Processor Lambda Function - Step 7: Customer Notification
+    const notificationProcessorFunction = new lambda.Function(this, 'NotificationProcessorFunction', {
+      functionName: 'notification-processor',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/notification-processor'),
+      layers: [dependencyLayer],
+      timeout: cdk.Duration.minutes(2),
+      memorySize: 256,
+      logGroup: new logs.LogGroup(this, 'NotificationProcessorLogGroup', {
+        retention: logs.RetentionDays.ONE_YEAR,
+      }),
+      tracing: lambda.Tracing.ACTIVE, // Enable X-Ray tracing
+    });
+
+    // Grant permissions for notification processor to send CloudWatch metrics
+    notificationProcessorFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['cloudwatch:PutMetricData'],
+      resources: ['*'],
+    }));
+
+    // Configure SQS as event source for notification processor
+    notificationProcessorFunction.addEventSource(new lambdaEventSources.SqsEventSource(notificationQueue, {
+      batchSize: 10, // Process up to 10 messages at once
+      maxBatchingWindow: cdk.Duration.seconds(5), // Wait up to 5 seconds to collect batch
+      reportBatchItemFailures: true, // Enable partial batch failure reporting
+    }));
+
     // Output the table names for reference
     new cdk.CfnOutput(this, 'TransactionsTableName', {
       value: transactionsTable.tableName,
@@ -554,6 +583,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'SeedDataFunctionName', {
       value: seedDataFunction.functionName,
       description: 'Seed Data Lambda Function Name (run once to populate initial data)'
+    });
+
+    new cdk.CfnOutput(this, 'NotificationProcessorFunctionName', {
+      value: notificationProcessorFunction.functionName,
+      description: 'Notification Processor Lambda Function Name (processes SQS notification queue)'
     });
 
     new cdk.CfnOutput(this, 'ApiKeySecretArn', {

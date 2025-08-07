@@ -111,36 +111,45 @@ def store_transaction(transaction: Dict[str, Any]) -> None:
 
 @xray_recorder.capture('send_notification')
 def send_notification(transaction: Dict[str, Any]) -> None:
-    """Send notification to SQS if needed"""
+    """Send notification to SQS for all transactions"""
     try:
-        if transaction['status'] == 'DECLINED' or transaction.get('riskLevel') == 'HIGH':
-            message = {
-                'type': 'TRANSACTION_ALERT',
-                'transactionId': transaction['transactionId'],
-                'userId': transaction['userId'],
-                'status': transaction['status'],
-                'riskLevel': transaction.get('riskLevel'),
-                'amount': transaction['amount'],
-                'correlationId': transaction['correlationId'],
-                'timestamp': datetime.utcnow().isoformat()
-            }
+        # Determine message type based on transaction outcome
+        if transaction['status'] == 'APPROVED':
+            message_type = 'TRANSACTION_SUCCESS'
+        else:
+            message_type = 'TRANSACTION_ALERT'
+        
+        message = {
+            'type': message_type,
+            'transactionId': transaction['transactionId'],
+            'userId': transaction['userId'],
+            'status': transaction['status'],
+            'riskLevel': transaction.get('riskLevel'),
+            'amount': transaction['amount'],
+            'correlationId': transaction['correlationId'],
+            'timestamp': datetime.utcnow().isoformat()
+        }
 
-            sqs_client.send_message(
-                QueueUrl=SQS_QUEUE_URL,
-                MessageBody=json.dumps(message),
-                MessageAttributes={
-                    'TransactionId': {
-                        'DataType': 'String',
-                        'StringValue': transaction['transactionId']
-                    },
-                    'RiskLevel': {
-                        'DataType': 'String', 
-                        'StringValue': transaction.get('riskLevel', 'UNKNOWN')
-                    }
+        sqs_client.send_message(
+            QueueUrl=SQS_QUEUE_URL,
+            MessageBody=json.dumps(message),
+            MessageAttributes={
+                'TransactionId': {
+                    'DataType': 'String',
+                    'StringValue': transaction['transactionId']
+                },
+                'MessageType': {
+                    'DataType': 'String', 
+                    'StringValue': message_type
+                },
+                'Status': {
+                    'DataType': 'String',
+                    'StringValue': transaction['status']
                 }
-            )
-            
-            logger.info(f"[{transaction['correlationId']}] Notification queued")
+            }
+        )
+        
+        logger.info(f"[{transaction['correlationId']}] {message_type} notification queued")
             
     except Exception as error:
         logger.error(f"[{transaction['correlationId']}] Failed to send notification: {error}")
