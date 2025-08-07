@@ -125,6 +125,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         RISK_THRESHOLD_MEDIUM: '50',
         AWS_XRAY_TRACING_NAME: 'fraud-detection-service',
         AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
+        CACHE_BUST: Date.now().toString(), // Force new container with updated permissions
       },
       logGroup: new logs.LogGroup(this, 'FraudDetectionLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
@@ -133,8 +134,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
       tracing: lambda.Tracing.ACTIVE,
     });
 
-    // Grant Lambda permissions to read from DynamoDB tables
-    fraudRulesTable.grantReadData(fraudDetectionFunction);
+    // Grant Lambda permissions to read/write DynamoDB tables (fraud detection needs write access for lazy initialization)
+    fraudRulesTable.grantReadWriteData(fraudDetectionFunction);
     transactionsTable.grantReadWriteData(fraudDetectionFunction);
 
     // Lambda Function - Transaction Service with X-Ray Tracing
@@ -677,7 +678,6 @@ export class AgenticDemoAppStack extends cdk.Stack {
 
     // Grant permissions to data generator
     apiKeySecret.grantRead(dataGeneratorFunction);
-    fraudRulesTable.grantReadWriteData(dataGeneratorFunction);
     scenarioConfigTable.grantReadData(dataGeneratorFunction);
 
     // CloudWatch Events Rule to trigger data generator every 1 minute
@@ -691,32 +691,6 @@ export class AgenticDemoAppStack extends cdk.Stack {
     // Add Lambda as target
     dataGeneratorRule.addTarget(new targets.LambdaFunction(dataGeneratorFunction));
 
-    // Manual trigger Lambda for initial data seeding
-    const seedDataFunction = new lambda.Function(this, 'SeedDataFunction', {
-      functionName: 'transaction-seed-data',
-      runtime: lambda.Runtime.PYTHON_3_11,
-      handler: 'index.seed_handler',
-      code: lambda.Code.fromAsset('lambda/data-generator'),
-      layers: [dependencyLayer],
-      timeout: cdk.Duration.minutes(10),
-      memorySize: 512,
-      environment: {
-        API_GATEWAY_URL: api.url,
-        API_KEY_SECRET_ARN: apiKeySecret.secretArn,
-        FRAUD_RULES_TABLE: fraudRulesTable.tableName,
-        SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
-        SEED_MODE: 'true',
-        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
-      },
-      logGroup: new logs.LogGroup(this, 'SeedDataLogGroup', {
-        retention: logs.RetentionDays.ONE_YEAR,
-      }),
-      tracing: lambda.Tracing.ACTIVE,
-    });
-
-    apiKeySecret.grantRead(seedDataFunction);
-    fraudRulesTable.grantReadWriteData(seedDataFunction);
-    scenarioConfigTable.grantReadData(seedDataFunction);
 
     // Notification Processor Lambda Function - Step 7: Customer Notification
     const notificationProcessorFunction = new lambda.Function(this, 'NotificationProcessorFunction', {
@@ -807,10 +781,6 @@ export class AgenticDemoAppStack extends cdk.Stack {
       description: 'Data Generator Lambda Function Name'
     });
 
-    new cdk.CfnOutput(this, 'SeedDataFunctionName', {
-      value: seedDataFunction.functionName,
-      description: 'Seed Data Lambda Function Name (run once to populate initial data)'
-    });
 
     new cdk.CfnOutput(this, 'NotificationProcessorFunctionName', {
       value: notificationProcessorFunction.functionName,
