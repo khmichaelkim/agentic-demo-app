@@ -21,6 +21,7 @@ logs_client = boto3.client('logs')
 
 # Environment variables
 SCENARIO_CONFIG_TABLE = os.environ['SCENARIO_CONFIG_TABLE']
+TRANSACTION_LOG_GROUP_NAME = os.environ.get('TRANSACTION_LOG_GROUP_NAME')
 
 # Get DynamoDB table reference
 scenario_table = dynamodb.Table(SCENARIO_CONFIG_TABLE)
@@ -70,40 +71,102 @@ PREDEFINED_SCENARIOS = {
 
 @xray_recorder.capture('get_transaction_flow')
 def get_transaction_flow() -> Dict[str, Any]:
-    """Get recent transaction flow using CloudWatch Logs Insights"""
+    """Get recent transaction flow using CloudWatch Logs Insights with fallback for indexing delays"""
     try:
-        # Calculate time range for last 5 minutes
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(minutes=5)
+        # Use environment variable for log group name (deployment-agnostic)
+        if not TRANSACTION_LOG_GROUP_NAME:
+            logger.error("TRANSACTION_LOG_GROUP_NAME environment variable not set")
+            return {
+                'transactions': [],
+                'query_status': 'error',
+                'message': 'Transaction log group name not configured',
+                'total_found': 0
+            }
         
-        # CloudWatch Logs Insights query - search for transaction logs
+        # Strategy: Try recent logs first, then fall back to older indexed logs
+        transactions = []
+        query_status = 'success'
+        
+        # First attempt: Recent logs (last 5 minutes) - may not be indexed yet
+        recent_transactions, recent_status = _query_logs_for_timerange(
+            TRANSACTION_LOG_GROUP_NAME, 
+            minutes_back=5,
+            description="recent"
+        )
+        
+        if recent_transactions:
+            transactions = recent_transactions
+            logger.info(f"Found {len(recent_transactions)} transactions in recent logs")
+        else:
+            # Fallback: Older logs (5-15 minutes ago) - should be indexed
+            logger.info("Recent logs not indexed yet, trying older logs...")
+            fallback_transactions, fallback_status = _query_logs_for_timerange(
+                TRANSACTION_LOG_GROUP_NAME, 
+                start_minutes_back=15,
+                end_minutes_back=5,
+                description="fallback"
+            )
+            
+            transactions = fallback_transactions
+            query_status = fallback_status
+            if fallback_transactions:
+                logger.info(f"Found {len(fallback_transactions)} transactions in fallback period")
+            else:
+                logger.warning("No transactions found in either recent or fallback periods")
+        
+        return {
+            'transactions': transactions,
+            'query_status': query_status,
+            'total_found': len(transactions),
+            'time_range': {
+                'start': (datetime.utcnow() - timedelta(minutes=15)).isoformat(),
+                'end': datetime.utcnow().isoformat()
+            },
+            'message': f'Found transactions using {"recent" if len(transactions) > 0 and query_status == "success" else "fallback"} query'
+        }
+        
+    except Exception as error:
+        logger.error(f"Error getting transaction flow: {error}")
+        return {
+            'transactions': [],
+            'query_status': 'error',
+            'message': str(error),
+            'total_found': 0
+        }
+
+def _query_logs_for_timerange(
+    log_group_name: str, 
+    minutes_back: int = None, 
+    start_minutes_back: int = None, 
+    end_minutes_back: int = None,
+    description: str = "query"
+) -> tuple:
+    """
+    Query CloudWatch Logs for a specific timerange
+    Returns: (transactions_list, status_string)
+    """
+    try:
+        # Calculate time range
+        end_time = datetime.utcnow()
+        if minutes_back:
+            start_time = end_time - timedelta(minutes=minutes_back)
+        else:
+            start_time = end_time - timedelta(minutes=start_minutes_back)
+            end_time = end_time - timedelta(minutes=end_minutes_back)
+        
+        # CloudWatch Logs Insights query
         query_string = """
         fields @timestamp, @message
-        | filter @message like /correlationId/ and @message like /status/ and @message like /riskLevel/
+        | filter @message like /Transaction completed/ and @message like /correlationId/
         | sort @timestamp desc
         | limit 10
         """
         
-        # Find the transaction service log group dynamically
-        log_groups_response = logs_client.describe_log_groups(
-            logGroupNamePrefix='AgenticDemoAppStack-TransactionServiceLogGroup'
-        )
-        
-        transaction_log_group = None
-        if log_groups_response['logGroups']:
-            transaction_log_group = log_groups_response['logGroups'][0]['logGroupName']
-        else:
-            logger.error("Transaction service log group not found")
-            return {
-                'transactions': [],
-                'query_status': 'error',
-                'message': 'Transaction service log group not found',
-                'total_found': 0
-            }
+        logger.info(f"Starting {description} query: {start_time} to {end_time}")
         
         # Start the query
         response = logs_client.start_query(
-            logGroupName=transaction_log_group,
+            logGroupName=log_group_name,
             startTime=int(start_time.timestamp()),
             endTime=int(end_time.timestamp()),
             queryString=query_string
@@ -112,14 +175,13 @@ def get_transaction_flow() -> Dict[str, Any]:
         query_id = response['queryId']
         
         # Poll for results (with timeout)
-        max_attempts = 30
+        max_attempts = 20  # Reduced from 30 for faster fallback
         attempt = 0
         
         while attempt < max_attempts:
             result = logs_client.get_query_results(queryId=query_id)
             
             if result['status'] == 'Complete':
-                # Process results
                 transactions = []
                 for row in result['results']:
                     # Convert CloudWatch Logs result format to dict
@@ -134,10 +196,10 @@ def get_transaction_flow() -> Dict[str, Any]:
                     # Parse JSON data from the log message
                     try:
                         import re
-                        # Look for JSON pattern in the log message
+                        import json
+                        # Look for JSON pattern in the log message  
                         json_match = re.search(r'\{[^}]*"correlationId"[^}]*\}', message)
                         if json_match:
-                            import json
                             transaction_data = json.loads(json_match.group())
                             
                             transactions.append({
@@ -152,40 +214,24 @@ def get_transaction_flow() -> Dict[str, Any]:
                         logger.warning(f"Failed to parse transaction data from log: {parse_error}")
                         continue
                 
-                return {
-                    'transactions': transactions,
-                    'query_status': 'success',
-                    'total_found': len(transactions),
-                    'time_range': {
-                        'start': start_time.isoformat(),
-                        'end': end_time.isoformat()
-                    }
-                }
+                logger.info(f"{description.capitalize()} query completed: {len(transactions)} transactions found")
+                return transactions, 'success'
                 
             elif result['status'] == 'Failed':
-                logger.error(f"CloudWatch query failed: {result}")
-                break
+                logger.error(f"{description.capitalize()} query failed: {result}")
+                return [], 'error'
                 
             # Wait before checking again
-            time.sleep(0.5)
+            time.sleep(0.3)
             attempt += 1
         
-        # Query timeout or failed
-        return {
-            'transactions': [],
-            'query_status': 'timeout',
-            'message': 'CloudWatch query timed out or failed',
-            'total_found': 0
-        }
+        # Query timeout
+        logger.warning(f"{description.capitalize()} query timed out")
+        return [], 'timeout'
         
     except Exception as error:
-        logger.error(f"Error getting transaction flow: {error}")
-        return {
-            'transactions': [],
-            'query_status': 'error',
-            'message': str(error),
-            'total_found': 0
-        }
+        logger.error(f"Error in {description} query: {error}")
+        return [], 'error'
 
 @xray_recorder.capture('get_current_scenario')
 def get_current_scenario() -> Dict[str, Any]:

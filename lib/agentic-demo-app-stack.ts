@@ -163,6 +163,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
       tracing: lambda.Tracing.ACTIVE,
     });
 
+    // Store reference to transaction service log group for scenario control
+    const transactionServiceLogGroup = transactionServiceFunction.logGroup;
+
     // Lambda Function - Scenario Control for Demo Management
     const scenarioControlFunction = new lambda.Function(this, 'ScenarioControlFunction', {
       functionName: 'scenario-control',
@@ -174,6 +177,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       memorySize: 256,
       environment: {
         SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
+        TRANSACTION_LOG_GROUP_NAME: transactionServiceLogGroup.logGroupName,
         AWS_XRAY_TRACING_NAME: 'scenario-control',
         AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
       },
