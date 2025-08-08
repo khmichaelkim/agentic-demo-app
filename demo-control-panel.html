@@ -15,7 +15,7 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
-            padding: 20px;
+            padding: 15px;
         }
         
         .container {
@@ -30,13 +30,13 @@
         .header {
             background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%);
             color: white;
-            padding: 30px;
+            padding: 20px;
             text-align: center;
         }
         
         .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
+            font-size: 2.2em;
+            margin-bottom: 5px;
         }
         
         .header p {
@@ -45,12 +45,12 @@
         }
         
         .main-content {
-            padding: 30px;
+            padding: 20px;
         }
         
         .config-section {
-            margin-bottom: 30px;
-            padding: 20px;
+            margin-bottom: 20px;
+            padding: 15px;
             border: 2px solid #e8f4fd;
             border-radius: 10px;
             background: #f8fbff;
@@ -59,7 +59,7 @@
         .section-title {
             font-size: 1.3em;
             color: #2c3e50;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
             border-bottom: 2px solid #3498db;
             padding-bottom: 5px;
         }
@@ -68,7 +68,14 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 15px;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
+            align-items: start;
+        }
+        
+        .api-inputs {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
         }
         
         .form-group {
@@ -106,13 +113,13 @@
             background: white;
             border: 2px solid #e8f4fd;
             border-radius: 8px;
-            padding: 15px;
+            padding: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
         
         .status-card h3 {
             color: #2c3e50;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
             font-size: 1.2em;
         }
         
@@ -137,14 +144,14 @@
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             gap: 15px;
-            margin-top: 20px;
+            margin-top: 10px;
         }
         
         .scenario-card {
             background: white;
             border: 2px solid #e8f4fd;
             border-radius: 8px;
-            padding: 15px;
+            padding: 12px;
             cursor: pointer;
             transition: all 0.3s;
             position: relative;
@@ -198,7 +205,7 @@
         .button-group {
             display: flex;
             gap: 10px;
-            margin-top: 20px;
+            margin-top: 15px;
             flex-wrap: wrap;
         }
         
@@ -323,6 +330,10 @@
                 grid-template-columns: 1fr;
             }
             
+            .api-inputs {
+                margin-bottom: 15px;
+            }
+            
             .status-grid {
                 grid-template-columns: 1fr;
             }
@@ -344,88 +355,42 @@
         </div>
         
         <div class="main-content">
-            <!-- API Configuration -->
+            <!-- API Configuration & Status -->
             <div class="config-section">
-                <div class="section-title">🔧 API Configuration</div>
+                <div class="section-title">🔧 API Configuration & Status</div>
                 <div class="api-config">
-                    <div class="form-group">
-                        <label for="apiUrl">API Gateway URL:</label>
-                        <input type="text" id="apiUrl" placeholder="https://your-api-gateway-url.amazonaws.com/prod" />
+                    <div class="api-inputs">
+                        <div class="form-group">
+                            <label for="apiUrl">API Gateway URL:</label>
+                            <input type="text" id="apiUrl" placeholder="https://your-api-gateway-url.amazonaws.com/prod" />
+                        </div>
+                        <div class="form-group">
+                            <label for="apiKey">API Key:</label>
+                            <input type="text" id="apiKey" placeholder="Your API key" />
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label for="apiKey">API Key:</label>
-                        <input type="text" id="apiKey" placeholder="Your API key" />
+                    <div class="status-card">
+                        <h3>Connection Status</h3>
+                        <div class="status-info">
+                            <span class="label">API Status:</span>
+                            <span class="value" id="apiStatus">Disconnected</span>
+                            <span class="label">Trans/Min:</span>
+                            <span class="value" id="currentTps">-</span>
+                            <span class="label">Time Left:</span>
+                            <span class="value" id="remainingTime">-</span>
+                        </div>
+                        <div class="progress-bar" id="progressBarContainer" style="display: none;">
+                            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                        </div>
                     </div>
                 </div>
                 <div class="button-group">
                     <button class="btn btn-success" onclick="connectToAPI()">Connect & Load Scenarios</button>
                     <button class="btn" onclick="refreshStatus()">Refresh Status</button>
                 </div>
-            </div>
-
-            <!-- Current Status -->
-            <div class="config-section">
-                <div class="section-title">📊 Status</div>
-                <div class="status-grid">
-                    <div class="status-card">
-                        <h3>Active Scenario</h3>
-                        <div class="status-info">
-                            <span class="label">Scenario:</span>
-                            <span class="value" id="currentScenario">-</span>
-                            <span class="label">Trans/Min:</span>
-                            <span class="value" id="currentTps">-</span>
-                            <span class="label">Elapsed:</span>
-                            <span class="value" id="elapsedTime">-</span>
-                            <span class="label">Time Left:</span>
-                            <span class="value" id="remainingTime">-</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="progressFill" style="width: 0%"></div>
-                        </div>
-                    </div>
-                    <div class="status-card">
-                        <h3>System Health</h3>
-                        <div class="status-info">
-                            <span class="label">API Status:</span>
-                            <span class="value" id="apiStatus">Disconnected</span>
-                            <span class="label">Last Update:</span>
-                            <span class="value" id="lastUpdate">Never</span>
-                            <span class="label">Auto Refresh:</span>
-                            <span class="value" id="autoRefreshStatus">On (5s)</span>
-                        </div>
-                    </div>
-                </div>
                 <div id="demoCallout"></div>
             </div>
 
-            <!-- Live Transaction Flow -->
-            <div class="config-section">
-                <div class="section-title">⚡ Live Transaction Flow</div>
-                <div class="status-grid">
-                    <div class="status-card" style="grid-column: 1 / -1;">
-                        <h3>Recent Transactions</h3>
-                        <div id="transactionFlow" style="font-family: 'Courier New', monospace; font-size: 12px; background: #f8f9fa; padding: 15px; border-radius: 5px; max-height: 300px; overflow-y: auto;">
-                            <div style="text-align: center; color: #7f8c8d; padding: 20px;">
-                                <div>🔄 Connecting to transaction stream...</div>
-                                <div style="font-size: 10px; margin-top: 5px;">Flow data will appear here once connected to API</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="status-card">
-                        <h3>Flow Metrics</h3>
-                        <div class="status-info">
-                            <span class="label">Query Status:</span>
-                            <span class="value" id="flowQueryStatus">Not Connected</span>
-                            <span class="label">Transactions Found:</span>
-                            <span class="value" id="transactionsFound">-</span>
-                            <span class="label">Time Range:</span>
-                            <span class="value" id="flowTimeRange">Last 5 minutes</span>
-                            <span class="label">Last Refresh:</span>
-                            <span class="value" id="flowLastUpdate">Never</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <!-- Scenario Selection -->
             <div class="config-section">
@@ -438,6 +403,19 @@
                 </div>
                 <div class="button-group">
                     <button class="btn btn-danger" onclick="resetToNormal()">Reset to Normal</button>
+                </div>
+            </div>
+
+            <!-- Live Transaction Flow -->
+            <div class="config-section">
+                <div class="section-title">⚡ Recent Transactions <span style="font-size: 0.8em; color: #7f8c8d; font-weight: normal;">(Last updated: <span id="lastUpdate">Never</span>)</span></div>
+                <div class="status-card">
+                    <div id="transactionFlow" style="font-family: 'Courier New', monospace; font-size: 12px; background: #f8f9fa; padding: 10px; border-radius: 5px; max-height: 250px; overflow-y: auto;">
+                        <div style="text-align: center; color: #7f8c8d; padding: 20px;">
+                            <div>🔄 Connecting to transaction stream...</div>
+                            <div style="font-size: 10px; margin-top: 5px;">Flow data will appear here once connected to API</div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -548,7 +526,6 @@
                             console.error('Auto-refresh error:', error);
                         }
                     }, 5000); // Refresh every 5 seconds
-                    document.getElementById('autoRefreshStatus').textContent = 'On (5s)';
                 }
                 
             } catch (error) {
@@ -605,26 +582,26 @@
             try {
                 const status = await makeAPIRequest('status');
                 
-                document.getElementById('currentScenario').textContent = 
-                    (status.current_scenario || 'normal').replace(/_/g, ' ').toUpperCase();
                 document.getElementById('currentTps').textContent = (status.config && status.config.tps) || '-';
                 
-                // Show N/A for elapsed/time left in normal scenario
+                // Show N/A for time left in normal scenario
                 const isNormalScenario = (status.current_scenario || 'normal') === 'normal';
                 
-                document.getElementById('elapsedTime').textContent = 
-                    isNormalScenario ? 'N/A' : 
-                    status.elapsed_seconds ? `${Math.floor(status.elapsed_seconds / 60)}m ${status.elapsed_seconds % 60}s` : '-';
                 document.getElementById('remainingTime').textContent = 
                     isNormalScenario ? 'N/A' : 
                     status.time_remaining ? `${Math.floor(parseInt(status.time_remaining) / 60)}m ${parseInt(status.time_remaining) % 60}s` : 'Completed';
                 
                 // Update progress bar
                 const progressFill = document.getElementById('progressFill');
-                if (status.config && status.config.duration && status.elapsed_seconds !== undefined) {
+                const progressContainer = document.getElementById('progressBarContainer');
+                
+                if (status.config && status.config.duration && status.elapsed_seconds !== undefined && !isNormalScenario) {
                     const duration = parseInt(status.config.duration);
                     const progress = (status.elapsed_seconds / duration) * 100;
                     progressFill.style.width = `${Math.min(progress, 100)}%`;
+                    progressContainer.style.display = 'block';
+                } else {
+                    progressContainer.style.display = 'none';
                 }
                 
                 // Update demo callout
@@ -657,14 +634,6 @@
             
             try {
                 const flowData = await makeAPIRequest('flow');
-                
-                // Update flow metrics
-                document.getElementById('flowQueryStatus').textContent = 
-                    flowData.query_status === 'success' ? '✅ Connected' : 
-                    flowData.query_status === 'timeout' ? '⏱️ Timeout' : '❌ Error';
-                    
-                document.getElementById('transactionsFound').textContent = flowData.total_found || 0;
-                document.getElementById('flowLastUpdate').textContent = new Date().toLocaleTimeString();
                 
                 // Format transaction flow display
                 const flowDiv = document.getElementById('transactionFlow');
@@ -732,7 +701,6 @@
                 
             } catch (error) {
                 console.error('Failed to refresh transaction flow:', error);
-                document.getElementById('flowQueryStatus').textContent = '❌ Error';
                 document.getElementById('transactionFlow').innerHTML = `
                     <div style="text-align: center; color: #e74c3c; padding: 20px;">
                         <div>❌ Error loading transaction flow</div>
@@ -763,7 +731,6 @@
             if (autoRefreshInterval) {
                 clearInterval(autoRefreshInterval);
                 autoRefreshInterval = null;
-                document.getElementById('autoRefreshStatus').textContent = 'Off';
                 showMessage('Auto refresh disabled');
             } else {
                 autoRefreshInterval = setInterval(async () => {
@@ -775,7 +742,6 @@
                         console.error('Auto-refresh error:', error);
                     }
                 }, 5000); // Refresh every 5 seconds
-                document.getElementById('autoRefreshStatus').textContent = 'On (5s)';
                 showMessage('Auto refresh enabled (5s interval)');
             }
         }
