@@ -790,7 +790,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
 
     // Grant permissions to data generator
     apiKeySecret.grantRead(dataGeneratorFunction);
-    scenarioConfigTable.grantReadData(dataGeneratorFunction);
+    scenarioConfigTable.grantReadWriteData(dataGeneratorFunction);
 
     // CloudWatch Events Rule to trigger data generator every 1 minute
     const dataGeneratorRule = new events.Rule(this, 'DataGeneratorRule', {

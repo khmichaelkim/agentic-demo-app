@@ -550,7 +550,7 @@
                     <div class="scenario-name">${scenario.name.replace(/_/g, ' ').toUpperCase()}</div>
                     <div class="scenario-description">${scenario.description || 'No description available'}</div>
                     <div class="scenario-meta">
-                        <span>${scenario.tps} TPM</span>
+                        <span>${scenario.tps * 60} TPM</span>
                         <span>${Math.floor(scenario.duration / 60)}m ${scenario.duration % 60}s</span>
                     </div>
                 </div>

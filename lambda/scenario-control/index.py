@@ -55,7 +55,7 @@ PREDEFINED_SCENARIOS = {
         'pattern': {
             'type': 'sustained_waves'  # Sustained wave attack pattern
         },
-        'description': 'DynamoDB throttling demo - Sustained wave attacks to exhaust burst capacity',
+        'description': 'DynamoDB throttling demo - Sustained wave attacks (80-150 concurrent bursts) to exhaust burst capacity',
         'demo_callouts': {
             '0': '🔥 WAVE ASSAULT BEGINS: 4 waves × 80 concurrent = 320 TPS to deplete burst capacity',
             '20': '⚡ ESCALATING: 5 waves × 120 concurrent = 600 TPS - should overwhelm 1 WCU now',

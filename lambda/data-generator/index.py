@@ -132,6 +132,45 @@ def get_scenario_timing(scenario_config: Dict[str, Any]) -> Dict[str, Any]:
             'is_active': True
         }
 
+@xray_recorder.capture('reset_scenario_to_normal')
+def reset_scenario_to_normal():
+    """Reset the scenario configuration to normal operation"""
+    try:
+        scenario_table = dynamodb.Table(SCENARIO_CONFIG_TABLE)
+        
+        # Set current scenario to normal with fresh start time
+        reset_config = {
+            'configId': 'current',
+            'scenario': 'normal',
+            'status': 'active',
+            'startTime': datetime.utcnow().isoformat() + 'Z',
+            'duration': 86400,  # 24 hours (essentially permanent)
+            'description': 'Auto-reset to normal operation after scenario expiration'
+        }
+        
+        scenario_table.put_item(Item=reset_config)
+        logger.info("✅ Successfully reset scenario configuration to 'normal'")
+        
+    except Exception as error:
+        logger.error(f"❌ Error resetting scenario to normal: {error}")
+        # Continue with default scenario if reset fails
+
+@xray_recorder.capture('cleanup_expired_scenarios')
+def cleanup_expired_scenarios():
+    """Proactive cleanup of any expired scenarios that weren't auto-reset"""
+    try:
+        scenario_config = get_current_scenario()
+        scenario_timing = get_scenario_timing(scenario_config)
+        
+        if not scenario_timing['is_active'] and scenario_config.get('scenario') != 'normal':
+            logger.info(f"🧹 Cleaning up expired scenario: {scenario_config.get('scenario')}")
+            reset_scenario_to_normal()
+            return True
+        return False
+    except Exception as error:
+        logger.error(f"Error during scenario cleanup: {error}")
+        return False
+
 @xray_recorder.capture('get_api_key')
 def get_api_key() -> str:
     """Get API key from Secrets Manager"""
@@ -297,6 +336,9 @@ def send_burst_transactions(transactions: List[Dict[str, Any]], api_key: str, ma
 def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     """Generate and send transactions based on current scenario configuration"""
     
+    # Proactive cleanup of expired scenarios
+    cleanup_expired_scenarios()
+    
     # Get current scenario configuration
     scenario_config = get_current_scenario()
     scenario_timing = get_scenario_timing(scenario_config)
@@ -324,22 +366,35 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     if demo_callout:
         logger.info(f"Demo callout: {demo_callout}")
     
-    # Check if scenario is still active
+    # Check if scenario is still active - auto-reset to normal when expired
     if not scenario_timing['is_active']:
-        logger.info(f"Scenario '{scenario_name}' has expired, switching to normal")
-        # Could automatically reset to normal here, but for demos we'll just log it
-        number_of_transactions = 2  # Generate minimal transactions when expired
+        logger.info(f"🔄 Scenario '{scenario_name}' has EXPIRED after {elapsed_seconds}s, auto-resetting to 'normal'")
+        
+        # Automatically reset scenario to normal
+        reset_scenario_to_normal()
+        
+        # Re-fetch scenario config after reset
+        scenario_config = get_current_scenario()
+        scenario_timing = get_scenario_timing(scenario_config)
+        scenario_name = scenario_config.get('scenario', 'normal')
+        
+        # Recalculate with normal scenario
+        current_tps = calculate_current_tps(scenario_config, 0)  # Reset elapsed time
+        number_of_transactions = calculate_transactions_to_generate(current_tps)
+        
+        logger.info(f"✅ Auto-reset complete: Now running '{scenario_name}' scenario with {current_tps} TPS")
     
     successful_count = 0
     failed_count = 0
     throttled_count = 0
     
-    # Check if we should use high TPS for throttling demo
+    # Check if we should use high TPS for throttling demo (only if scenario is still active)
     use_high_tps = False
     
-    if scenario_name == 'demo_throttling':
-        # Simple approach: 100 TPS (very high) for 1 minute to trigger throttling
+    if scenario_name == 'demo_throttling' and scenario_timing['is_active']:
+        # Only apply throttling attack if scenario hasn't expired
         use_high_tps = True
+        logger.info(f"🔥 Throttling scenario active: {scenario_timing['remaining_seconds']}s remaining")
     
     if use_high_tps:
         # SUSTAINED WAVE ATTACK: Multiple waves of concurrent requests to exhaust burst capacity
@@ -364,6 +419,14 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
         total_failed = 0
         
         for wave_num in range(num_waves):
+            # 🛡️ MID-EXECUTION SCENARIO CHECK: Cancel waves if scenario expired
+            current_scenario_check = get_current_scenario()
+            current_timing_check = get_scenario_timing(current_scenario_check)
+            
+            if not current_timing_check['is_active'] or current_scenario_check.get('scenario') != 'demo_throttling':
+                logger.info(f"🛑 CANCELLING WAVE ATTACKS: Scenario expired or changed during execution (wave {wave_num + 1}/{num_waves})")
+                break
+            
             logger.info(f"🌊 Wave {wave_num + 1}/{num_waves}: Launching {wave_size} concurrent transactions...")
             
             # Generate batch of transactions for this wave
