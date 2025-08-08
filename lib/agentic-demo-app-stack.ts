@@ -84,6 +84,23 @@ export class AgenticDemoAppStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
     });
 
+    // Recent Transactions Flow Table for real-time display in control plane
+    const recentTransactionsFlowTable = new dynamodb.Table(this, 'RecentTransactionsFlowTable', {
+      tableName: 'RecentTransactionsFlowTable',
+      partitionKey: {
+        name: 'pk',
+        type: dynamodb.AttributeType.STRING  // "FLOW#YYYY-MM-DD"
+      },
+      sortKey: {
+        name: 'sk',
+        type: dynamodb.AttributeType.STRING  // "timestamp#correlationId"
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, // On-demand for demo usage
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      timeToLiveAttribute: 'ttl', // Auto-delete after 1 hour
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
+    });
+
     // SQS Queues
     
     // Dead Letter Queue
@@ -151,6 +168,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       environment: {
         DYNAMODB_TABLE_TRANSACTIONS: transactionsTable.tableName,
         DYNAMODB_TABLE_FRAUD_RULES: fraudRulesTable.tableName,
+        RECENT_TRANSACTIONS_FLOW_TABLE: recentTransactionsFlowTable.tableName,
         SQS_QUEUE_URL: notificationQueue.queueUrl,
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
         AWS_XRAY_TRACING_NAME: 'transaction-service',
@@ -178,6 +196,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       memorySize: 256,
       environment: {
         SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
+        RECENT_TRANSACTIONS_FLOW_TABLE: recentTransactionsFlowTable.tableName,
         TRANSACTION_LOG_GROUP_NAME: transactionServiceLogGroup.logGroupName,
         AWS_XRAY_TRACING_NAME: 'scenario-control',
         AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
@@ -191,13 +210,15 @@ export class AgenticDemoAppStack extends cdk.Stack {
     // Grant permissions to the transaction service Lambda
     transactionsTable.grantReadWriteData(transactionServiceFunction);
     fraudRulesTable.grantReadData(transactionServiceFunction);
+    recentTransactionsFlowTable.grantReadWriteData(transactionServiceFunction);
     notificationQueue.grantSendMessages(transactionServiceFunction);
     fraudDetectionFunction.grantInvoke(transactionServiceFunction);
 
     // Grant permissions to the scenario control Lambda
     scenarioConfigTable.grantReadWriteData(scenarioControlFunction);
+    recentTransactionsFlowTable.grantReadData(scenarioControlFunction);
     
-    // Grant CloudWatch Logs permissions to scenario control Lambda
+    // Grant CloudWatch Logs permissions to scenario control Lambda (keeping for backward compatibility)
     scenarioControlFunction.addToRolePolicy(new iam.PolicyStatement({
       actions: [
         'logs:StartQuery',
@@ -885,6 +906,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'ScenarioControlFunctionName', {
       value: scenarioControlFunction.functionName,
       description: 'Scenario Control Lambda Function Name for demo management'
+    });
+
+    new cdk.CfnOutput(this, 'RecentTransactionsFlowTableName', {
+      value: recentTransactionsFlowTable.tableName,
+      description: 'DynamoDB Recent Transactions Flow Table Name for real-time display'
     });
   }
 }

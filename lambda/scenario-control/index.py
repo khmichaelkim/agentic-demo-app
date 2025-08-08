@@ -21,10 +21,12 @@ logs_client = boto3.client('logs')
 
 # Environment variables
 SCENARIO_CONFIG_TABLE = os.environ['SCENARIO_CONFIG_TABLE']
+RECENT_TRANSACTIONS_FLOW_TABLE = os.environ.get('RECENT_TRANSACTIONS_FLOW_TABLE')
 TRANSACTION_LOG_GROUP_NAME = os.environ.get('TRANSACTION_LOG_GROUP_NAME')
 
-# Get DynamoDB table reference
+# Get DynamoDB table references
 scenario_table = dynamodb.Table(SCENARIO_CONFIG_TABLE)
+flow_table = dynamodb.Table(RECENT_TRANSACTIONS_FLOW_TABLE) if RECENT_TRANSACTIONS_FLOW_TABLE else None
 
 # Default scenario configuration
 DEFAULT_SCENARIO = {
@@ -71,7 +73,69 @@ PREDEFINED_SCENARIOS = {
 
 @xray_recorder.capture('get_transaction_flow')
 def get_transaction_flow() -> Dict[str, Any]:
-    """Get recent transaction flow using CloudWatch Logs Insights with fallback for indexing delays"""
+    """Get recent transaction flow from DynamoDB flow table for real-time display"""
+    try:
+        # Use flow table if available
+        if flow_table:
+            return get_transaction_flow_from_dynamodb()
+        
+        # Fallback to CloudWatch Logs if flow table not configured
+        logger.info("Flow table not configured, falling back to CloudWatch Logs")
+        return get_transaction_flow_from_cloudwatch()
+        
+    except Exception as error:
+        logger.error(f"Error getting transaction flow: {error}")
+        return {
+            'transactions': [],
+            'query_status': 'error',
+            'message': str(error),
+            'total_found': 0
+        }
+
+def get_transaction_flow_from_dynamodb() -> Dict[str, Any]:
+    """Get recent transactions from DynamoDB flow table"""
+    try:
+        # Query flow table for today's transactions
+        today = datetime.utcnow().strftime('%Y-%m-%d')
+        
+        response = flow_table.query(
+            KeyConditionExpression='pk = :pk',
+            ExpressionAttributeValues={
+                ':pk': f'FLOW#{today}'
+            },
+            ScanIndexForward=False,  # Newest first
+            Limit=100  # Get last 100 transactions
+        )
+        
+        transactions = []
+        for item in response.get('Items', []):
+            transactions.append({
+                'id': item.get('correlationId', 'unknown')[-8:],  # Last 8 chars
+                'status': item.get('status', 'UNKNOWN'),
+                'riskLevel': item.get('riskLevel', 'N/A'),
+                'amount': item.get('amount', 0),
+                'userId': item.get('userId', 'unknown'),
+                'timestamp': item.get('timestamp', '')[:19],  # YYYY-MM-DD HH:MM:SS
+                'error': item.get('error')
+            })
+        
+        logger.info(f"Found {len(transactions)} transactions in flow table")
+        
+        return {
+            'transactions': transactions,
+            'query_status': 'success',
+            'total_found': len(transactions),
+            'source': 'dynamodb',
+            'message': 'Real-time transaction data from flow table'
+        }
+        
+    except Exception as error:
+        logger.error(f"Error querying flow table: {error}")
+        # Fall back to CloudWatch Logs
+        return get_transaction_flow_from_cloudwatch()
+
+def get_transaction_flow_from_cloudwatch() -> Dict[str, Any]:
+    """Get recent transaction flow using CloudWatch Logs Insights (fallback)"""
     try:
         # Use environment variable for log group name (deployment-agnostic)
         if not TRANSACTION_LOG_GROUP_NAME:
@@ -118,6 +182,7 @@ def get_transaction_flow() -> Dict[str, Any]:
             'transactions': transactions,
             'query_status': query_status,
             'total_found': len(transactions),
+            'source': 'cloudwatch',
             'time_range': {
                 'start': (datetime.utcnow() - timedelta(minutes=15)).isoformat(),
                 'end': datetime.utcnow().isoformat()
@@ -126,7 +191,7 @@ def get_transaction_flow() -> Dict[str, Any]:
         }
         
     except Exception as error:
-        logger.error(f"Error getting transaction flow: {error}")
+        logger.error(f"Error getting transaction flow from CloudWatch: {error}")
         return {
             'transactions': [],
             'query_status': 'error',
@@ -154,12 +219,12 @@ def _query_logs_for_timerange(
             start_time = end_time - timedelta(minutes=start_minutes_back)
             end_time = end_time - timedelta(minutes=end_minutes_back)
         
-        # CloudWatch Logs Insights query
+        # CloudWatch Logs Insights query - include both successful and throttled transactions
         query_string = """
         fields @timestamp, @message
-        | filter @message like /Transaction completed/ and @message like /correlationId/
+        | filter (@message like /Transaction completed/ and @message like /correlationId/) or @message like /DynamoDB throttling/
         | sort @timestamp desc
-        | limit 10
+        | limit 15
         """
         
         logger.info(f"Starting {description} query: {start_time} to {end_time}")
@@ -193,23 +258,43 @@ def _query_logs_for_timerange(
                     message = row_data.get('@message', '')
                     timestamp = row_data.get('@timestamp', '')
                     
-                    # Parse JSON data from the log message
+                    # Parse transaction data from the log message
                     try:
                         import re
                         import json
-                        # Look for JSON pattern in the log message  
-                        json_match = re.search(r'\{[^}]*"correlationId"[^}]*\}', message)
-                        if json_match:
-                            transaction_data = json.loads(json_match.group())
+                        
+                        # Handle throttling errors
+                        if 'Transaction failed due to DynamoDB throttling' in message or 'DynamoDB throttling' in message:
+                            # Extract correlation ID from throttling message
+                            correlation_match = re.search(r'\[([^\]]+)\]', message)
+                            correlation_id = correlation_match.group(1) if correlation_match else 'unknown'
                             
                             transactions.append({
-                                'id': transaction_data.get('correlationId', 'unknown')[-8:],  # Last 8 chars
-                                'status': transaction_data.get('status', 'UNKNOWN'),
-                                'riskLevel': transaction_data.get('riskLevel', 'N/A'),
-                                'amount': transaction_data.get('amount', '0'),
-                                'userId': transaction_data.get('userId', 'unknown'),
-                                'timestamp': timestamp[:19] if timestamp else ''  # YYYY-MM-DD HH:MM:SS
+                                'id': correlation_id[-8:] if len(correlation_id) > 8 else correlation_id,
+                                'status': 'THROTTLED',
+                                'riskLevel': 'N/A',
+                                'amount': 'N/A',
+                                'userId': 'N/A', 
+                                'timestamp': timestamp[:19] if timestamp else '',
+                                'error': '503 Service Unavailable'
                             })
+                        
+                        # Handle successful transactions with JSON data
+                        else:
+                            # Look for JSON pattern in the log message  
+                            json_match = re.search(r'\{[^}]*"correlationId"[^}]*\}', message)
+                            if json_match:
+                                transaction_data = json.loads(json_match.group())
+                                
+                                transactions.append({
+                                    'id': transaction_data.get('correlationId', 'unknown')[-8:],  # Last 8 chars
+                                    'status': transaction_data.get('status', 'UNKNOWN'),
+                                    'riskLevel': transaction_data.get('riskLevel', 'N/A'),
+                                    'amount': transaction_data.get('amount', '0'),
+                                    'userId': transaction_data.get('userId', 'unknown'),
+                                    'timestamp': timestamp[:19] if timestamp else ''  # YYYY-MM-DD HH:MM:SS
+                                })
+                                
                     except Exception as parse_error:
                         logger.warning(f"Failed to parse transaction data from log: {parse_error}")
                         continue

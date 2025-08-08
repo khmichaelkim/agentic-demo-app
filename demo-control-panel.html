@@ -410,7 +410,7 @@
             <div class="config-section">
                 <div class="section-title">⚡ Recent Transactions <span style="font-size: 0.8em; color: #7f8c8d; font-weight: normal;">(Last updated: <span id="lastUpdate">Never</span>)</span></div>
                 <div class="status-card">
-                    <div id="transactionFlow" style="font-family: 'Courier New', monospace; font-size: 12px; background: #f8f9fa; padding: 10px; border-radius: 5px; max-height: 250px; overflow-y: auto;">
+                    <div id="transactionFlow" style="font-family: 'Courier New', monospace; font-size: 12px; background: #f8f9fa; padding: 10px; border-radius: 5px; max-height: 400px; overflow-y: auto; overflow-x: auto;">
                         <div style="text-align: center; color: #7f8c8d; padding: 20px;">
                             <div>🔄 Connecting to transaction stream...</div>
                             <div style="font-size: 10px; margin-top: 5px;">Flow data will appear here once connected to API</div>
@@ -525,7 +525,7 @@
                         } catch (error) {
                             console.error('Auto-refresh error:', error);
                         }
-                    }, 5000); // Refresh every 5 seconds
+                    }, 2500); // Refresh every 2.5 seconds
                 }
                 
             } catch (error) {
@@ -648,7 +648,7 @@
                     html += `<th style="padding: 5px; text-align: left; width: 80px;">Status</th>`;
                     html += `<th style="padding: 5px; text-align: left; width: 60px;">Risk</th>`;
                     html += `<th style="padding: 5px; text-align: left; width: 70px;">Amount</th>`;
-                    html += `<th style="padding: 5px; text-align: left; width: 80px;">User</th>`;
+                    html += `<th style="padding: 5px; text-align: left; width: 140px;">User</th>`;
                     html += `<th style="padding: 5px; text-align: left;">Time</th>`;
                     html += `</tr>`;
                     
@@ -656,7 +656,8 @@
                     flowData.transactions.forEach((txn, index) => {
                         const statusColor = 
                             txn.status === 'APPROVED' ? '#27ae60' : 
-                            txn.status === 'DECLINED' ? '#e74c3c' : '#f39c12';
+                            txn.status === 'DECLINED' ? '#e74c3c' : 
+                            txn.status === 'THROTTLED' ? '#e67e22' : '#f39c12';
                         const riskColor = 
                             txn.riskLevel === 'LOW' ? '#27ae60' :
                             txn.riskLevel === 'HIGH' ? '#e74c3c' : '#f39c12';
@@ -666,7 +667,7 @@
                         html += `<td style="padding: 3px 5px; color: ${statusColor}; font-weight: bold;">${txn.status}</td>`;
                         html += `<td style="padding: 3px 5px; color: ${riskColor};">${txn.riskLevel}</td>`;
                         html += `<td style="padding: 3px 5px;">$${parseFloat(txn.amount || 0).toFixed(2)}</td>`;
-                        html += `<td style="padding: 3px 5px; font-family: monospace;">${txn.userId.substring(0, 12)}</td>`;
+                        html += `<td style="padding: 3px 5px; font-family: monospace; font-size: 11px;">${txn.userId}</td>`;
                         html += `<td style="padding: 3px 5px; font-size: 10px;">${txn.timestamp}</td>`;
                         html += `</tr>`;
                     });
@@ -676,11 +677,16 @@
                     // Add flow summary
                     const approved = flowData.transactions.filter(t => t.status === 'APPROVED').length;
                     const declined = flowData.transactions.filter(t => t.status === 'DECLINED').length;
+                    const throttled = flowData.transactions.filter(t => t.status === 'THROTTLED').length;
                     const successRate = flowData.transactions.length > 0 ? 
                         ((approved / flowData.transactions.length) * 100).toFixed(1) : 0;
                     
                     html += `<div style="margin-top: 10px; padding: 8px; background: #e8f6f3; border-radius: 3px; font-size: 10px;">`;
-                    html += `<strong>Summary:</strong> ${approved} approved, ${declined} declined | Success Rate: ${successRate}%`;
+                    html += `<strong>Summary:</strong> ${approved} approved, ${declined} declined`;
+                    if (throttled > 0) {
+                        html += `, <span style="color: #e67e22; font-weight: bold;">${throttled} throttled (503)</span>`;
+                    }
+                    html += ` | Success Rate: ${successRate}%`;
                     html += `</div>`;
                     
                     flowDiv.innerHTML = html;
@@ -741,8 +747,8 @@
                     } catch (error) {
                         console.error('Auto-refresh error:', error);
                     }
-                }, 5000); // Refresh every 5 seconds
-                showMessage('Auto refresh enabled (5s interval)');
+                }, 2500); // Refresh every 2.5 seconds
+                showMessage('Auto refresh enabled (2.5s interval)');
             }
         }
 

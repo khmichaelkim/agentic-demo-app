@@ -39,12 +39,14 @@ cloudwatch_client = boto3.client('cloudwatch')
 # Environment variables
 TRANSACTIONS_TABLE = os.environ['DYNAMODB_TABLE_TRANSACTIONS']
 FRAUD_RULES_TABLE = os.environ['DYNAMODB_TABLE_FRAUD_RULES']
+RECENT_TRANSACTIONS_FLOW_TABLE = os.environ.get('RECENT_TRANSACTIONS_FLOW_TABLE')
 SQS_QUEUE_URL = os.environ['SQS_QUEUE_URL']
 FRAUD_FUNCTION_NAME = os.environ['LAMBDA_FRAUD_FUNCTION_NAME']
 
 # Get DynamoDB table references
 transactions_table = dynamodb.Table(TRANSACTIONS_TABLE)
 fraud_rules_table = dynamodb.Table(FRAUD_RULES_TABLE)
+flow_table = dynamodb.Table(RECENT_TRANSACTIONS_FLOW_TABLE) if RECENT_TRANSACTIONS_FLOW_TABLE else None
 
 def convert_floats_to_decimal(data: Dict[str, Any]) -> Dict[str, Any]:
     """Convert float values to Decimal for DynamoDB storage"""
@@ -286,6 +288,41 @@ def send_metrics(transaction: Dict[str, Any], processing_time: float) -> None:
         logger.error(f"Failed to send metrics: {error}")
         # Don't fail the transaction if metrics fail
 
+@xray_recorder.capture('write_to_flow_table')
+def write_to_flow_table(transaction: Dict[str, Any]) -> None:
+    """Write transaction to flow table for real-time display"""
+    if not flow_table:
+        return  # Flow table not configured
+    
+    try:
+        # Create flow record with simplified data for frontend
+        timestamp = datetime.utcnow()
+        date_key = timestamp.strftime('%Y-%m-%d')
+        
+        flow_record = {
+            'pk': f'FLOW#{date_key}',
+            'sk': f'{timestamp.isoformat()}#{transaction["correlationId"]}',
+            'transactionId': transaction['transactionId'],
+            'correlationId': transaction['correlationId'],
+            'status': transaction.get('status', 'UNKNOWN'),
+            'riskLevel': transaction.get('riskLevel', 'N/A'),
+            'amount': Decimal(str(transaction.get('amount', 0))),
+            'userId': transaction.get('userId', 'unknown'),
+            'timestamp': timestamp.isoformat(),
+            'error': transaction.get('error'),
+            'ttl': int(timestamp.timestamp()) + 3600  # Expire after 1 hour
+        }
+        
+        # Remove None values
+        flow_record = {k: v for k, v in flow_record.items() if v is not None}
+        
+        flow_table.put_item(Item=flow_record)
+        logger.info(f"[{transaction['correlationId']}] Transaction written to flow table")
+        
+    except Exception as error:
+        logger.error(f"[{transaction.get('correlationId', 'unknown')}] Failed to write to flow table: {error}")
+        # Don't fail the transaction if flow table write fails
+
 def send_metric(metric_name: str, value: float, correlation_id: str) -> None:
     """Send individual metric to CloudWatch"""
     try:
@@ -367,6 +404,14 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
             logger.error(f"[{correlation_id}] Transaction failed due to DynamoDB throttling: {throttling_error}")
             send_throttling_metric('TransactionThrottled', 1, correlation_id)
             
+            # Write throttled transaction to flow table
+            throttled_transaction = {
+                **transaction_data,
+                'status': 'THROTTLED',
+                'error': '503 Service Unavailable'
+            }
+            write_to_flow_table(throttled_transaction)
+            
             return create_response(503, {
                 'error': 'Service Unavailable',
                 'reason': 'Database temporarily unavailable due to high load',
@@ -374,6 +419,9 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
                 'retry_after': '30',  # Suggest client retry after 30 seconds
                 'transactionId': transaction_data['transactionId']
             })
+
+        # Write successful transaction to flow table for real-time display
+        write_to_flow_table(transaction_data)
 
         # Send notification to SQS if needed
         send_notification(transaction_data)
