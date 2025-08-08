@@ -5,6 +5,7 @@ import time
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Any
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 import requests
 from aws_xray_sdk.core import xray_recorder
@@ -241,14 +242,56 @@ def send_transaction(transaction: Dict[str, Any], api_key: str) -> Dict[str, Any
         
         if response.status_code in range(200, 300):
             logger.info(f"Transaction successful: {transaction['userId']}, ${transaction['amount']}")
-            return response.json()
+            return {'status': 'success', 'response': response.json()}
+        elif response.status_code == 503:
+            logger.warning(f"Transaction throttled (503): {transaction['userId']}")
+            return {'status': 'throttled', 'response': response.json() if response.text else {}}
         else:
             logger.error(f"Transaction failed: {response.status_code}, {response.text}")
-            raise Exception(f"HTTP {response.status_code}: {response.text}")
+            return {'status': 'failed', 'error': f"HTTP {response.status_code}"}
             
     except Exception as error:
         logger.error(f"Request error: {error}")
-        raise error
+        return {'status': 'error', 'error': str(error)}
+
+@xray_recorder.capture('send_burst_transactions')
+def send_burst_transactions(transactions: List[Dict[str, Any]], api_key: str, max_workers: int = 20) -> Dict[str, Any]:
+    """Send multiple transactions concurrently using ThreadPoolExecutor"""
+    results = {
+        'successful': 0,
+        'throttled': 0,
+        'failed': 0,
+        'errors': []
+    }
+    
+    logger.info(f"Starting burst of {len(transactions)} transactions with {max_workers} workers")
+    
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all transactions concurrently
+        future_to_transaction = {
+            executor.submit(send_transaction, txn, api_key): txn 
+            for txn in transactions
+        }
+        
+        # Process results as they complete
+        for future in as_completed(future_to_transaction):
+            try:
+                result = future.result(timeout=10)
+                if result['status'] == 'success':
+                    results['successful'] += 1
+                elif result['status'] == 'throttled':
+                    results['throttled'] += 1
+                else:
+                    results['failed'] += 1
+                    if 'error' in result:
+                        results['errors'].append(result['error'])
+            except Exception as error:
+                results['failed'] += 1
+                results['errors'].append(str(error))
+                logger.error(f"Burst transaction error: {error}")
+    
+    logger.info(f"Burst complete: {results['successful']} successful, {results['throttled']} throttled, {results['failed']} failed")
+    return results
 
 @xray_recorder.capture('generate_scenario_transactions')
 def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
@@ -289,54 +332,98 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     
     successful_count = 0
     failed_count = 0
+    throttled_count = 0
     
-    # Generate transactions based on scenario
-    for i in range(number_of_transactions):
-        try:
+    # Check if we should use burst mode for throttling demo
+    use_burst_mode = False
+    
+    if scenario_name == 'demo_throttling':
+        # Burst for the first 10 seconds to show throttling
+        if elapsed_seconds < 10:
+            use_burst_mode = True
+    
+    if use_burst_mode:
+        # Aggressive burst mode for throttling demonstration
+        burst_size = 50  # Send 50 concurrent transactions (reliably triggers throttling)
+        transactions_to_send = []
+        
+        logger.info(f"🔴 BURST MODE: Generating {burst_size} concurrent transactions (elapsed: {elapsed_seconds}s)")
+        
+        # Generate batch of transactions
+        for _ in range(burst_size):
             transaction = generate_scenario_transaction(scenario_config, special_features)
-            
-            # For velocity scenarios, occasionally generate multiple transactions from same user
-            if special_features.get('velocity_patterns') and random.random() < 0.3:
-                # Generate 1-3 additional transactions from same user
-                for _ in range(random.randint(1, 3)):
-                    velocity_transaction = generate_scenario_transaction(scenario_config, special_features)
-                    velocity_transaction['userId'] = transaction['userId']  # Same user
-                    
-                    try:
-                        send_transaction(velocity_transaction, api_key)
-                        successful_count += 1
+            transactions_to_send.append(transaction)
+        
+        # Send burst of concurrent transactions
+        burst_results = send_burst_transactions(transactions_to_send, api_key, max_workers=burst_size)
+        
+        successful_count = burst_results['successful']
+        throttled_count = burst_results['throttled']
+        failed_count = burst_results['failed']
+        
+        if throttled_count > 0:
+            logger.info(f"🔴 THROTTLING DETECTED: {throttled_count} transactions throttled (503 errors)")
+        
+        # Log burst metrics
+        logger.info(f"Burst results: {successful_count} successful, {throttled_count} throttled, {failed_count} failed")
+        
+    else:
+        # Normal sequential mode for other scenarios
+        for i in range(number_of_transactions):
+            try:
+                transaction = generate_scenario_transaction(scenario_config, special_features)
+                
+                # For velocity scenarios, occasionally generate multiple transactions from same user
+                if special_features.get('velocity_patterns') and random.random() < 0.3:
+                    # Generate 1-3 additional transactions from same user
+                    for _ in range(random.randint(1, 3)):
+                        velocity_transaction = generate_scenario_transaction(scenario_config, special_features)
+                        velocity_transaction['userId'] = transaction['userId']  # Same user
+                        
+                        result = send_transaction(velocity_transaction, api_key)
+                        if result['status'] == 'success':
+                            successful_count += 1
+                        elif result['status'] == 'throttled':
+                            throttled_count += 1
+                        else:
+                            failed_count += 1
                         time.sleep(random.uniform(0.1, 0.3))  # Quick succession
-                    except Exception as error:
-                        logger.error(f"Failed to send velocity transaction: {error}")
-                        failed_count += 1
-            
-            # Send the main transaction
-            send_transaction(transaction, api_key)
-            successful_count += 1
-            
-            # Variable delay based on scenario predictability
-            if special_features.get('predictable_patterns'):
-                delay = 60 / max(current_tps, 1)  # More predictable timing
-            else:
-                delay = random.uniform(0.1, 0.8)  # Random delay
                 
-            time.sleep(delay)
+                # Send the main transaction
+                result = send_transaction(transaction, api_key)
+                if result['status'] == 'success':
+                    successful_count += 1
+                elif result['status'] == 'throttled':
+                    throttled_count += 1
+                else:
+                    failed_count += 1
                 
-        except Exception as error:
-            logger.error(f"Error generating transaction {i}: {error}")
-            failed_count += 1
+                # Variable delay based on scenario predictability
+                if special_features.get('predictable_patterns'):
+                    delay = 60 / max(current_tps, 1)  # More predictable timing
+                else:
+                    delay = random.uniform(0.1, 0.8)  # Random delay
+                    
+                time.sleep(delay)
+                    
+            except Exception as error:
+                logger.error(f"Error generating transaction {i}: {error}")
+                failed_count += 1
     
     result = {
         'successful_count': successful_count,
         'failed_count': failed_count,
+        'throttled_count': throttled_count,
         'scenario': scenario_name,
         'current_tps': current_tps,
         'elapsed_seconds': elapsed_seconds,
         'remaining_seconds': scenario_timing['remaining_seconds'],
-        'demo_callout': demo_callout
+        'demo_callout': demo_callout,
+        'burst_mode': use_burst_mode
     }
     
-    logger.info(f"Scenario transaction results: {successful_count} successful, {failed_count} failed")
+    total_sent = successful_count + throttled_count + failed_count
+    logger.info(f"Scenario results: {successful_count} successful, {throttled_count} throttled, {failed_count} failed (Total: {total_sent})")
     return result
 
 @xray_recorder.capture('seed_fraud_rules')
@@ -548,14 +635,16 @@ def handler(event, context):
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'message': f"Scenario '{result['scenario']}': {result['successful_count']} transactions generated",
+                'message': f"Scenario '{result['scenario']}': {result['successful_count']} successful, {result.get('throttled_count', 0)} throttled",
                 'scenario': result['scenario'],
                 'successful_count': result['successful_count'],
                 'failed_count': result['failed_count'],
+                'throttled_count': result.get('throttled_count', 0),
                 'current_tps': result['current_tps'],
                 'elapsed_seconds': result['elapsed_seconds'],
                 'remaining_seconds': result['remaining_seconds'],
                 'demo_callout': result.get('demo_callout'),
+                'burst_mode': result.get('burst_mode', False),
                 'timestamp': datetime.utcnow().isoformat()
             }, default=str)
         }

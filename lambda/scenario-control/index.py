@@ -50,23 +50,16 @@ PREDEFINED_SCENARIOS = {
     },
     'demo_throttling': {
         'scenario': 'demo_throttling',
-        'tps': 180,
-        'duration': 150,
+        'tps': 5,  # Normal TPS (burst mode sends 50 concurrent)
+        'duration': 30,  # Quick 30-second demo
         'pattern': {
-            'type': 'curve',
-            'phases': [
-                {'duration': 30, 'tps': 12},   # Normal baseline
-                {'duration': 30, 'tps': 180},  # Ramp up to throttle
-                {'duration': 60, 'tps': 180},  # Sustained throttling
-                {'duration': 30, 'tps': 12}    # Recovery
-            ]
+            'type': 'steady'  # Simple pattern
         },
-        'description': 'DynamoDB throttling demonstration (180 transactions per minute)',
+        'description': 'Quick DynamoDB throttling burst - 10 seconds of chaos, done!',
         'demo_callouts': {
-            '30': 'Notice normal healthy metrics at 12 TPM',
-            '60': 'DynamoDB throttling begins at 180 TPM - watch for 503 errors',
-            '120': 'System shows retry logic and recovery patterns',
-            '150': 'Back to normal operations at 12 TPM'
+            '0': '🔴 BURST MODE: 50 concurrent requests triggering throttling NOW',
+            '10': '📊 Throttling complete - observe the 503 errors',
+            '20': '✅ System recovered - demo complete'
         }
     }
 }

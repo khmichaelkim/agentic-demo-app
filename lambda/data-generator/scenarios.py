@@ -60,24 +60,16 @@ DEMO_SCENARIOS = {
     
     'demo_throttling': {
         'scenario': 'demo_throttling',
-        'tps': 15,
-        'duration': 150,
+        'tps': 5,  # Normal TPS (burst mode sends 50 concurrent)
+        'duration': 30,  # Quick 30-second demo
         'pattern': {
-            'type': 'curve',
-            'phases': [
-                {'duration': 30, 'tps': 5, 'name': 'baseline'},     # Normal baseline
-                {'duration': 30, 'tps': 15, 'name': 'ramp'},        # Ramp to trigger throttling
-                {'duration': 60, 'tps': 15, 'name': 'throttling'},  # Sustained throttling
-                {'duration': 30, 'tps': 5, 'name': 'recovery'}      # Recovery
-            ]
+            'type': 'steady'  # Simple pattern
         },
-        'description': 'Controlled DynamoDB throttling demonstration with clear recovery phases',
+        'description': 'Quick DynamoDB throttling burst - 10 seconds of chaos, done!',
         'demo_callouts': {
-            '30': 'Normal operations - healthy metrics across the board',
-            '60': 'DynamoDB throttling begins - watch for ProvisionedThroughputExceeded errors',
-            '90': 'Sustained throttling - notice 503 errors and increased latency',
-            '120': 'Recovery phase - retry logic and exponential backoff in action',
-            '150': 'Back to normal - system fully recovered'
+            '0': '🔴 BURST MODE: 50 concurrent requests triggering throttling NOW',
+            '10': '📊 Throttling complete - observe the 503 errors',
+            '20': '✅ System recovered - demo complete'
         },
         'transaction_mix': {
             'low_value': 0.8,    # Focus on volume, not value
@@ -86,7 +78,8 @@ DEMO_SCENARIOS = {
         },
         'special_features': {
             'concentrate_users': True,  # Use fewer unique users to trigger velocity rules
-            'predictable_patterns': True # Consistent patterns for demo reliability
+            'predictable_patterns': True, # Consistent patterns for demo reliability
+            'burst_mode': True  # Indicates this scenario uses concurrent burst mode
         }
     },
     
