@@ -334,38 +334,70 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     failed_count = 0
     throttled_count = 0
     
-    # Check if we should use burst mode for throttling demo
-    use_burst_mode = False
+    # Check if we should use high TPS for throttling demo
+    use_high_tps = False
     
     if scenario_name == 'demo_throttling':
-        # Burst for the first 10 seconds to show throttling
-        if elapsed_seconds < 10:
-            use_burst_mode = True
+        # Simple approach: 100 TPS (very high) for 1 minute to trigger throttling
+        use_high_tps = True
     
-    if use_burst_mode:
-        # Aggressive burst mode for throttling demonstration
-        burst_size = 50  # Send 50 concurrent transactions (reliably triggers throttling)
-        transactions_to_send = []
+    if use_high_tps:
+        # SUSTAINED WAVE ATTACK: Multiple waves of concurrent requests to exhaust burst capacity
+        # More aggressive settings based on elapsed time to escalate pressure
+        if elapsed_seconds < 20:
+            wave_size = 80   # Start with 80 concurrent per wave
+            num_waves = 4    # 4 waves = 320 total per minute
+            wave_delay = 0.3 # 300ms between waves
+        elif elapsed_seconds < 40:
+            wave_size = 120  # Escalate to 120 concurrent per wave
+            num_waves = 5    # 5 waves = 600 total per minute
+            wave_delay = 0.2 # 200ms between waves (faster)
+        else:
+            wave_size = 150  # Maximum assault: 150 concurrent per wave
+            num_waves = 6    # 6 waves = 900 total per minute
+            wave_delay = 0.1 # 100ms between waves (fastest)
         
-        logger.info(f"🔴 BURST MODE: Generating {burst_size} concurrent transactions (elapsed: {elapsed_seconds}s)")
+        logger.info(f"🔥 SUSTAINED WAVE ATTACK: {num_waves} waves of {wave_size} concurrent transactions (elapsed: {elapsed_seconds}s)")
         
-        # Generate batch of transactions
-        for _ in range(burst_size):
-            transaction = generate_scenario_transaction(scenario_config, special_features)
-            transactions_to_send.append(transaction)
+        total_successful = 0
+        total_throttled = 0
+        total_failed = 0
         
-        # Send burst of concurrent transactions
-        burst_results = send_burst_transactions(transactions_to_send, api_key, max_workers=burst_size)
+        for wave_num in range(num_waves):
+            logger.info(f"🌊 Wave {wave_num + 1}/{num_waves}: Launching {wave_size} concurrent transactions...")
+            
+            # Generate batch of transactions for this wave
+            transactions_to_send = []
+            for _ in range(wave_size):
+                transaction = generate_scenario_transaction(scenario_config, special_features)
+                transactions_to_send.append(transaction)
+            
+            # Send wave of concurrent transactions
+            burst_results = send_burst_transactions(transactions_to_send, api_key, max_workers=wave_size)
+            
+            total_successful += burst_results['successful']
+            total_throttled += burst_results['throttled']
+            total_failed += burst_results['failed']
+            
+            logger.info(f"Wave {wave_num + 1} results: {burst_results['successful']} ok, {burst_results['throttled']} throttled, {burst_results['failed']} failed")
+            
+            if burst_results['throttled'] > 0:
+                logger.info(f"🔴 THROTTLING ACHIEVED: Wave {wave_num + 1} hit throttling limits!")
+            
+            # Brief delay before next wave to maintain pressure without overwhelming system
+            if wave_num < num_waves - 1:  # No delay after last wave
+                time.sleep(wave_delay)
         
-        successful_count = burst_results['successful']
-        throttled_count = burst_results['throttled']
-        failed_count = burst_results['failed']
+        successful_count = total_successful
+        throttled_count = total_throttled
+        failed_count = total_failed
         
         if throttled_count > 0:
-            logger.info(f"🔴 THROTTLING DETECTED: {throttled_count} transactions throttled (503 errors)")
+            logger.info(f"🔴 THROTTLING SUCCESS: {throttled_count}/{total_successful + total_throttled + total_failed} transactions throttled (503 errors)")
+        else:
+            logger.info(f"⚠️  THROTTLING FAILED: All {successful_count} transactions succeeded - DDB burst capacity exceeded expectations")
         
-        # Log burst metrics
-        logger.info(f"Burst results: {successful_count} successful, {throttled_count} throttled, {failed_count} failed")
+        logger.info(f"Final results: {successful_count} successful, {throttled_count} throttled, {failed_count} failed")
         
     else:
         # Normal sequential mode for other scenarios
@@ -419,7 +451,7 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
         'elapsed_seconds': elapsed_seconds,
         'remaining_seconds': scenario_timing['remaining_seconds'],
         'demo_callout': demo_callout,
-        'burst_mode': use_burst_mode
+        'burst_mode': use_high_tps
     }
     
     total_sent = successful_count + throttled_count + failed_count

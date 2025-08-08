@@ -133,9 +133,9 @@ def store_transaction(transaction: Dict[str, Any]) -> None:
     """Store transaction in DynamoDB with throttling handling"""
     correlation_id = transaction.get('correlationId', 'unknown')
     
-    # Simple retry configuration for demo purposes - always surface throttling
-    max_retries = 0  # No retries - surface throttling immediately for demo
-    base_delay = 0.01
+    # Configurable retry configuration for demo scenarios
+    max_retries = int(os.environ.get('MAX_RETRIES', '0'))  # No retries - surface throttling immediately for demo
+    base_delay = float(os.environ.get('BASE_DELAY_MS', '0.01'))
     
     retry_count = 0
     

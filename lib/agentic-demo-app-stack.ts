@@ -171,6 +171,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         RECENT_TRANSACTIONS_FLOW_TABLE: recentTransactionsFlowTable.tableName,
         SQS_QUEUE_URL: notificationQueue.queueUrl,
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
+        MAX_RETRIES: '0', // Demo-configurable retry count for throttling scenarios
+        BASE_DELAY_MS: '0.01', // Demo-configurable base delay for retry scenarios
         AWS_XRAY_TRACING_NAME: 'transaction-service',
         AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
         CACHE_BUST: Date.now().toString(), // Force new container with simplified throttling
@@ -299,7 +301,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
           resources: ['*']
         })
       ]),
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: new logs.LogGroup(this, 'GetApiKeyValueLogGroup', {
+        retention: logs.RetentionDays.ONE_WEEK,
+      }),
     });
 
     // Custom resource to update the secret with the actual API key value
@@ -340,7 +344,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
           resources: [apiKeySecret.secretArn]
         })
       ]),
-      logRetention: logs.RetentionDays.ONE_WEEK,
+      logGroup: new logs.LogGroup(this, 'UpdateApiKeySecretLogGroup', {
+        retention: logs.RetentionDays.ONE_WEEK,
+      }),
     });
 
     // Ensure dependencies are correct
