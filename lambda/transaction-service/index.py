@@ -22,12 +22,12 @@ patch_all()
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-# Configure boto3 with minimal retry settings to surface throttling exceptions
+# Configure boto3 with NO retries to surface throttling exceptions immediately
 retry_config = Config(
     retries={
-        'max_attempts': 2,
+        'max_attempts': 1,
         'mode': 'standard',
-        'total_max_attempts': 2
+        'total_max_attempts': 1
     }
 )
 
@@ -130,9 +130,12 @@ def apply_business_rules(transaction: Dict[str, Any], fraud_result: Dict[str, An
 def store_transaction(transaction: Dict[str, Any]) -> None:
     """Store transaction in DynamoDB with throttling handling"""
     correlation_id = transaction.get('correlationId', 'unknown')
+    
+    # Simple retry configuration for demo purposes - always surface throttling
+    max_retries = 0  # No retries - surface throttling immediately for demo
+    base_delay = 0.01
+    
     retry_count = 0
-    max_retries = 1  # Minimal retries to surface throttling exceptions
-    base_delay = 0.1  # 100ms base delay
     
     # Convert floats to Decimal for DynamoDB
     transaction_for_storage = convert_floats_to_decimal(transaction)

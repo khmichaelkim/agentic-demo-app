@@ -126,7 +126,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         RISK_THRESHOLD_MEDIUM: '50',
         AWS_XRAY_TRACING_NAME: 'fraud-detection-service',
         AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
-        CACHE_BUST: Date.now().toString(), // Force new container with updated permissions
+        CACHE_BUST: Date.now().toString(), // Force new container with scenario-aware throttling
       },
       logGroup: new logs.LogGroup(this, 'FraudDetectionLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
@@ -155,6 +155,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
         AWS_XRAY_TRACING_NAME: 'transaction-service',
         AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
+        CACHE_BUST: Date.now().toString(), // Force new container with simplified throttling
       },
       logGroup: new logs.LogGroup(this, 'TransactionServiceLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
