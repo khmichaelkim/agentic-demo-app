@@ -55,6 +55,11 @@ DEMO_SCENARIOS = {
         'burst_size': 50,
         'burst_duration_seconds': 10,
         'concurrent_workers': 50
+    },
+    'bad_code_push': {
+        'description': 'Rewards service without caching causing latency spikes',
+        'cache_enabled': False,
+        'rewards_query_delay_ms': 1500
     }
 }
 

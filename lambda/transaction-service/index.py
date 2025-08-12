@@ -42,6 +42,7 @@ FRAUD_RULES_TABLE = os.environ['DYNAMODB_TABLE_FRAUD_RULES']
 RECENT_TRANSACTIONS_FLOW_TABLE = os.environ.get('RECENT_TRANSACTIONS_FLOW_TABLE')
 SQS_QUEUE_URL = os.environ['SQS_QUEUE_URL']
 FRAUD_FUNCTION_NAME = os.environ['LAMBDA_FRAUD_FUNCTION_NAME']
+REWARDS_FUNCTION_NAME = os.environ.get('REWARDS_FUNCTION_NAME')
 
 # Get DynamoDB table references
 transactions_table = dynamodb.Table(TRANSACTIONS_TABLE)
@@ -87,6 +88,29 @@ def validate_transaction_data(data: Dict[str, Any]) -> tuple[bool, Optional[str]
         data['location'] = 'US-XX'
     
     return True, None
+
+@xray_recorder.capture('calculate_rewards')
+def calculate_rewards(transaction: Dict[str, Any]) -> Dict[str, Any]:
+    """Call rewards eligibility service"""
+    if not REWARDS_FUNCTION_NAME:
+        return None
+    
+    try:
+        payload = json.dumps(transaction)
+        
+        response = lambda_client.invoke(
+            FunctionName=REWARDS_FUNCTION_NAME,
+            InvocationType='RequestResponse',
+            Payload=payload
+        )
+        
+        result = json.loads(response['Payload'].read())
+        logger.info(f"[{transaction['correlationId']}] Rewards calculated: {result}")
+        return result
+        
+    except Exception as error:
+        logger.error(f"[{transaction['correlationId']}] Rewards calculation failed: {error}")
+        return None
 
 @xray_recorder.capture('perform_fraud_check')
 def perform_fraud_check(transaction: Dict[str, Any]) -> Dict[str, Any]:
@@ -397,6 +421,11 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
         transaction_data['riskScore'] = fraud_result.get('riskScore')
         transaction_data['riskLevel'] = fraud_result.get('riskLevel')
 
+        # Calculate rewards (non-critical path)
+        rewards_result = calculate_rewards(transaction_data)
+        if rewards_result:
+            transaction_data['rewards'] = rewards_result
+
         # Store transaction in DynamoDB with throttling handling
         try:
             store_transaction(transaction_data)
@@ -437,6 +466,9 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
             'riskScore': transaction_data['riskLevel'],
             'correlationId': transaction_data['correlationId']
         }
+        
+        if 'rewards' in transaction_data:
+            response['rewards'] = transaction_data['rewards']
         
         if transaction_data['status'] == 'DECLINED':
             response['reason'] = get_rejection_reason(fraud_result)

@@ -158,6 +158,26 @@ export class AgenticDemoAppStack extends cdk.Stack {
     fraudRulesTable.grantReadWriteData(fraudDetectionFunction);
     transactionsTable.grantReadWriteData(fraudDetectionFunction);
 
+    // Lambda Function - Rewards Eligibility Service with X-Ray Tracing
+    const rewardsEligibilityFunction = new lambda.Function(this, 'RewardsEligibilityFunction', {
+      functionName: 'rewards-eligibility-service',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/rewards-eligibility'),
+      layers: [dependencyLayer],
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 256,
+      environment: {
+        USE_CACHE: 'true',
+        REWARDS_QUERY_DELAY_MS: '1500',
+        AWS_XRAY_TRACING_NAME: 'rewards-eligibility-service',
+      },
+      logGroup: new logs.LogGroup(this, 'RewardsEligibilityLogGroup', {
+        retention: logs.RetentionDays.ONE_YEAR,
+      }),
+      tracing: lambda.Tracing.ACTIVE,
+    });
+
     // Lambda Function - Transaction Service with X-Ray Tracing
     const transactionServiceFunction = new lambda.Function(this, 'TransactionServiceFunction', {
       functionName: 'transaction-service',
@@ -173,6 +193,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         RECENT_TRANSACTIONS_FLOW_TABLE: recentTransactionsFlowTable.tableName,
         SQS_QUEUE_URL: notificationQueue.queueUrl,
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
+        REWARDS_FUNCTION_NAME: rewardsEligibilityFunction.functionName,
         MAX_RETRIES: '0', // Demo-configurable retry count for throttling scenarios
         BASE_DELAY_MS: '0.01', // Demo-configurable base delay for retry scenarios
         AWS_XRAY_TRACING_NAME: 'transaction-service',
@@ -221,6 +242,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
     recentTransactionsFlowTable.grantReadWriteData(transactionServiceFunction);
     notificationQueue.grantSendMessages(transactionServiceFunction);
     fraudDetectionFunction.grantInvoke(transactionServiceFunction);
+    rewardsEligibilityFunction.grantInvoke(transactionServiceFunction);
 
     // Grant permissions to the scenario control Lambda
     scenarioConfigTable.grantReadWriteData(scenarioControlFunction);
@@ -809,6 +831,18 @@ export class AgenticDemoAppStack extends cdk.Stack {
       actions: ['dynamodb:UpdateTable'],
       resources: [transactionsTable.tableArn],
     }));
+    
+    // Grant Lambda configuration update permissions for rewards service cache toggle
+    scenarioControlFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['lambda:UpdateFunctionConfiguration', 'lambda:GetFunction'],
+      resources: [rewardsEligibilityFunction.functionArn]
+    }));
+    
+    // Grant DynamoDB table management permissions for WCU reset
+    scenarioControlFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:DescribeTable', 'dynamodb:UpdateTable'],
+      resources: [transactionsTable.tableArn]
+    }));
 
     // CloudWatch Events Rule to trigger data generator every 1 minute
     const dataGeneratorRule = new events.Rule(this, 'DataGeneratorRule', {
@@ -821,11 +855,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
     // Add Lambda as target
     dataGeneratorRule.addTarget(new targets.LambdaFunction(dataGeneratorFunction));
 
-    // Periodic Throttling Demo Rule - triggers throttling demo every 10 minutes
+    // Periodic Throttling Demo Rule - triggers throttling demo every 3 hours
     const periodicThrottleRule = new events.Rule(this, 'PeriodicThrottleRule', {
       ruleName: 'periodic-throttling-demo-schedule',
-      description: 'Trigger throttling demo every 10 minutes for automated testing',
-      schedule: events.Schedule.rate(cdk.Duration.minutes(10)),
+      description: 'Trigger throttling demo every 3 hours for automated testing',
+      schedule: events.Schedule.rate(cdk.Duration.hours(3)),
       enabled: true,
     });
 
@@ -952,6 +986,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'RecentTransactionsFlowTableName', {
       value: recentTransactionsFlowTable.tableName,
       description: 'DynamoDB Recent Transactions Flow Table Name for real-time display'
+    });
+
+    new cdk.CfnOutput(this, 'RewardsEligibilityFunctionName', {
+      value: rewardsEligibilityFunction.functionName,
+      description: 'Rewards Eligibility Service Lambda Function Name (bad code push demo)'
     });
   }
 }
