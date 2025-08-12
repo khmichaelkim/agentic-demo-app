@@ -7,6 +7,7 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as applicationsignals from 'aws-cdk-lib/aws-applicationsignals';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
@@ -799,6 +800,94 @@ export class AgenticDemoAppStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
+    // Application Signals SLOs - Commented out due to CDK deployment issues
+    // Manual creation via console works but CDK has service discovery timing issues
+    // 
+    // Note: Latency SLO was successfully created but availability SLO consistently fails
+    // Service discovery shows: Name="Transaction Processing API", Environment="api-gateway:prod"
+    /*
+    // API Gateway Latency SLO - P99 <= 30ms, 99.99% success over 3 rolling hours
+    const apiGatewayLatencySlo = new applicationsignals.CfnServiceLevelObjective(this, 'ApiGatewayLatencySlo', {
+      name: 'api-gateway-latency-slo',
+      description: 'API Gateway P99 latency should be under 30ms for 99.99% of requests over 3 rolling hours',
+      sli: {
+        sliMetric: {
+          keyAttributes: {
+            'Name': 'Transaction Processing API',
+            'Type': 'Service',
+            'Environment': 'api-gateway:prod'
+          },
+          operationName: 'POST /transactions',
+          metricType: 'LATENCY',
+          periodSeconds: 60, // 1 minute periods
+          statistic: 'p99'
+        },
+        metricThreshold: 30, // 30ms threshold
+        comparisonOperator: 'LessThanOrEqualTo'
+      },
+      goal: {
+        interval: {
+          rollingInterval: {
+            duration: 3,
+            durationUnit: 'HOUR'
+          }
+        },
+        attainmentGoal: 99.99, // 99.99% of requests should meet the latency target
+        warningThreshold: 30.0 // Warn when 30% of error budget is consumed
+      },
+      tags: [
+        {
+          key: 'Service',
+          value: 'TransactionProcessing'
+        },
+        {
+          key: 'Component',
+          value: 'APIGateway'
+        }
+      ]
+    });
+
+    // API Gateway Availability SLO - 99.99% availability over 3 rolling hours
+    const apiGatewayAvailabilitySlo = new applicationsignals.CfnServiceLevelObjective(this, 'ApiGatewayAvailabilitySlo', {
+      name: 'api-gateway-availability-slo',
+      description: 'API Gateway should have 99.99% availability (non-5XX responses) over 3 rolling hours',
+      sli: {
+        sliMetric: {
+          keyAttributes: {
+            'Name': 'Transaction Processing API',
+            'Type': 'Service', 
+            'Environment': 'api-gateway:prod'
+          },
+          operationName: 'POST /transactions',
+          metricType: 'AVAILABILITY',
+          periodSeconds: 60 // 1 minute periods
+        },
+        metricThreshold: 99.99, // 99.99% availability threshold
+        comparisonOperator: 'GreaterThanOrEqualTo'
+      },
+      goal: {
+        interval: {
+          rollingInterval: {
+            duration: 3,
+            durationUnit: 'HOUR'
+          }
+        },
+        attainmentGoal: 99.99, // 99.99% availability
+        warningThreshold: 30.0 // Warn when 30% of error budget is consumed
+      },
+      tags: [
+        {
+          key: 'Service',
+          value: 'TransactionProcessing'
+        },
+        {
+          key: 'Component', 
+          value: 'APIGateway'
+        }
+      ]
+    });
+    */
+
     // Data Generator Lambda Function
     const dataGeneratorFunction = new lambda.Function(this, 'DataGeneratorFunction', {
       functionName: 'transaction-data-generator',
@@ -992,5 +1081,18 @@ export class AgenticDemoAppStack extends cdk.Stack {
       value: rewardsEligibilityFunction.functionName,
       description: 'Rewards Eligibility Service Lambda Function Name (bad code push demo)'
     });
+
+    // SLO outputs - Commented out since SLOs are commented out
+    /*
+    new cdk.CfnOutput(this, 'ApiGatewayLatencySloName', {
+      value: apiGatewayLatencySlo.name!,
+      description: 'API Gateway Latency SLO Name (P99 <= 30ms, 99.99% over 3 rolling hours)'
+    });
+
+    new cdk.CfnOutput(this, 'ApiGatewayAvailabilitySloName', {
+      value: apiGatewayAvailabilitySlo.name!,
+      description: 'API Gateway Availability SLO Name (99.99% availability over 3 rolling hours)'
+    });
+    */
   }
 }

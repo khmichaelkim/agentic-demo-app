@@ -1,6 +1,6 @@
 # Transaction Processing Demo
 
-A serverless transaction system with fraud detection - built for learning AWS Lambda, API Gateway, DynamoDB, and observability patterns.
+A serverless transaction system with fraud detection - built using AWS Lambda, API Gateway, DynamoDB, and observability patterns.
 
 ## What it does
 
