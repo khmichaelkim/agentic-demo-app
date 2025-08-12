@@ -146,7 +146,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         CACHE_BUST: Date.now().toString(), // Force new container with scenario-aware throttling
       },
       logGroup: new logs.LogGroup(this, 'FraudDetectionLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-fraud-detection',
         retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       // Enable X-Ray tracing
       tracing: lambda.Tracing.ACTIVE,
@@ -178,7 +180,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         CACHE_BUST: Date.now().toString(), // Force new container with simplified throttling
       },
       logGroup: new logs.LogGroup(this, 'TransactionServiceLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-transaction-service',
         retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       // Enable X-Ray tracing
       tracing: lambda.Tracing.ACTIVE,
@@ -204,7 +208,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
       },
       logGroup: new logs.LogGroup(this, 'ScenarioControlLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-scenario-control',
         retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       tracing: lambda.Tracing.ACTIVE,
     });
@@ -302,7 +308,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         })
       ]),
       logGroup: new logs.LogGroup(this, 'GetApiKeyValueLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-get-api-key-value',
         retention: logs.RetentionDays.ONE_WEEK,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
     });
 
@@ -345,7 +353,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         })
       ]),
       logGroup: new logs.LogGroup(this, 'UpdateApiKeySecretLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-update-api-key-secret',
         retention: logs.RetentionDays.ONE_WEEK,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
     });
 
@@ -783,7 +793,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
       },
       logGroup: new logs.LogGroup(this, 'DataGeneratorLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-data-generator',
         retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       tracing: lambda.Tracing.ACTIVE, // Enable X-Ray tracing
     });
@@ -835,7 +847,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
       timeout: cdk.Duration.minutes(2),
       memorySize: 256,
       logGroup: new logs.LogGroup(this, 'NotificationProcessorLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-notification-processor',
         retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
       tracing: lambda.Tracing.ACTIVE, // Enable X-Ray tracing
     });
