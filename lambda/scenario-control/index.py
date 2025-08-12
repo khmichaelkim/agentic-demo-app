@@ -50,18 +50,16 @@ PREDEFINED_SCENARIOS = {
     },
     'demo_throttling': {
         'scenario': 'demo_throttling',
-        'tps': 50,  # Reduced TPS since we're using sustained wave attacks
-        'duration': 90,  # Extended to 90 seconds for sustained pressure
+        'tps': 5,  # Normal TPS (not used during burst)
+        'duration': 20,  # Quick 20-second demo
         'pattern': {
-            'type': 'sustained_waves'  # Sustained wave attack pattern
+            'type': 'steady'  # Simple pattern
         },
-        'description': 'DynamoDB throttling demo - Sustained wave attacks (80-150 concurrent bursts) to exhaust burst capacity',
+        'description': 'Simple DynamoDB throttling demo - 500 concurrent transactions',
         'demo_callouts': {
-            '0': '🔥 WAVE ASSAULT BEGINS: 4 waves × 80 concurrent = 320 TPS to deplete burst capacity',
-            '20': '⚡ ESCALATING: 5 waves × 120 concurrent = 600 TPS - should overwhelm 1 WCU now',
-            '40': '🚀 MAXIMUM ASSAULT: 6 waves × 150 concurrent = 900 TPS - DDB throttling imminent',
-            '60': '🔴 SUSTAINED PRESSURE: 90 seconds of waves should trigger WriteThrottleEvents',
-            '80': '📊 Demo completing - check CloudWatch metrics and Lambda logs for 503 errors'
+            '0': '🔴 BURST: 500 concurrent transactions hitting 1 WCU limit',
+            '5': '📊 Throttling in progress - observe 503 errors',
+            '15': '✅ Demo complete - system recovered'
         }
     }
 }

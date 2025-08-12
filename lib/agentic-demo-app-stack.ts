@@ -791,6 +791,12 @@ export class AgenticDemoAppStack extends cdk.Stack {
     // Grant permissions to data generator
     apiKeySecret.grantRead(dataGeneratorFunction);
     scenarioConfigTable.grantReadWriteData(dataGeneratorFunction);
+    
+    // Grant DynamoDB table update permissions for throttling demo WCU reset
+    dataGeneratorFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['dynamodb:UpdateTable'],
+      resources: [transactionsTable.tableArn],
+    }));
 
     // CloudWatch Events Rule to trigger data generator every 1 minute
     const dataGeneratorRule = new events.Rule(this, 'DataGeneratorRule', {

@@ -60,26 +60,26 @@ DEMO_SCENARIOS = {
     
     'demo_throttling': {
         'scenario': 'demo_throttling',
-        'tps': 5,  # Normal TPS (burst mode sends 50 concurrent)
-        'duration': 30,  # Quick 30-second demo
+        'tps': 5,  # Normal TPS (not used during burst)
+        'duration': 20,  # Quick 20-second demo
         'pattern': {
             'type': 'steady'  # Simple pattern
         },
-        'description': 'Quick DynamoDB throttling burst - 10 seconds of chaos, done!',
+        'description': 'Simple DynamoDB throttling demo - 500 concurrent transactions',
         'demo_callouts': {
-            '0': '🔴 BURST MODE: 50 concurrent requests triggering throttling NOW',
-            '10': '📊 Throttling complete - observe the 503 errors',
-            '20': '✅ System recovered - demo complete'
+            '0': '🔴 BURST: 500 concurrent transactions hitting 1 WCU limit',
+            '5': '📊 Throttling in progress - observe 503 errors',
+            '15': '✅ Demo complete - system recovered'
         },
         'transaction_mix': {
-            'low_value': 0.8,    # Focus on volume, not value
-            'medium_value': 0.15,
-            'high_value': 0.05
+            'low_value': 0.9,    # Keep transactions simple and fast
+            'medium_value': 0.08,
+            'high_value': 0.02
         },
         'special_features': {
-            'concentrate_users': True,  # Use fewer unique users to trigger velocity rules
-            'predictable_patterns': True, # Consistent patterns for demo reliability
-            'burst_mode': True  # Indicates this scenario uses concurrent burst mode
+            'burst_mode': True,  # Simple burst mode
+            'burst_size': 500,   # 500 concurrent transactions
+            'reset_wcu': True    # Reset WCU to 1 before burst
         }
     },
     

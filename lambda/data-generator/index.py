@@ -332,6 +332,29 @@ def send_burst_transactions(transactions: List[Dict[str, Any]], api_key: str, ma
     logger.info(f"Burst complete: {results['successful']} successful, {results['throttled']} throttled, {results['failed']} failed")
     return results
 
+@xray_recorder.capture('reset_dynamodb_wcu')
+def reset_dynamodb_wcu_to_minimum():
+    """Reset DynamoDB TransactionsTable WCU to 1 for throttling demo"""
+    try:
+        import boto3
+        dynamodb_client = boto3.client('dynamodb')
+        
+        # Update TransactionsTable WCU to 1
+        response = dynamodb_client.update_table(
+            TableName='TransactionsTable',
+            ProvisionedThroughput={
+                'ReadCapacityUnits': 1,
+                'WriteCapacityUnits': 1
+            }
+        )
+        
+        logger.info("✅ Successfully reset TransactionsTable WCU to 1 for throttling demo")
+        return True
+        
+    except Exception as error:
+        logger.error(f"❌ Failed to reset DynamoDB WCU: {error}")
+        return False
+
 @xray_recorder.capture('generate_scenario_transactions')
 def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     """Generate and send transactions based on current scenario configuration"""
@@ -388,79 +411,44 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     failed_count = 0
     throttled_count = 0
     
-    # Check if we should use high TPS for throttling demo (only if scenario is still active)
-    use_high_tps = False
+    # Check if we should use burst mode for throttling demo
+    use_burst_mode = False
     
     if scenario_name == 'demo_throttling' and scenario_timing['is_active']:
-        # Only apply throttling attack if scenario hasn't expired
-        use_high_tps = True
+        use_burst_mode = True
         logger.info(f"🔥 Throttling scenario active: {scenario_timing['remaining_seconds']}s remaining")
+        
+        # Reset DynamoDB WCU to 1 before starting burst
+        if special_features.get('reset_wcu'):
+            logger.info("🔧 Resetting DynamoDB WCU to 1 for throttling demo...")
+            reset_dynamodb_wcu_to_minimum()
+            time.sleep(2)  # Wait for table update to take effect
     
-    if use_high_tps:
-        # SUSTAINED WAVE ATTACK: Multiple waves of concurrent requests to exhaust burst capacity
-        # More aggressive settings based on elapsed time to escalate pressure
-        if elapsed_seconds < 20:
-            wave_size = 80   # Start with 80 concurrent per wave
-            num_waves = 4    # 4 waves = 320 total per minute
-            wave_delay = 0.3 # 300ms between waves
-        elif elapsed_seconds < 40:
-            wave_size = 120  # Escalate to 120 concurrent per wave
-            num_waves = 5    # 5 waves = 600 total per minute
-            wave_delay = 0.2 # 200ms between waves (faster)
-        else:
-            wave_size = 150  # Maximum assault: 150 concurrent per wave
-            num_waves = 6    # 6 waves = 900 total per minute
-            wave_delay = 0.1 # 100ms between waves (fastest)
+    if use_burst_mode:
+        # SIMPLE BURST: Single wave of concurrent transactions
+        burst_size = special_features.get('burst_size', 500)
         
-        logger.info(f"🔥 SUSTAINED WAVE ATTACK: {num_waves} waves of {wave_size} concurrent transactions (elapsed: {elapsed_seconds}s)")
+        logger.info(f"🔥 SIMPLE BURST: Launching {burst_size} concurrent transactions")
         
-        total_successful = 0
-        total_throttled = 0
-        total_failed = 0
+        # Generate batch of transactions for burst
+        transactions_to_send = []
+        for _ in range(burst_size):
+            transaction = generate_scenario_transaction(scenario_config, special_features)
+            transactions_to_send.append(transaction)
         
-        for wave_num in range(num_waves):
-            # 🛡️ MID-EXECUTION SCENARIO CHECK: Cancel waves if scenario expired
-            current_scenario_check = get_current_scenario()
-            current_timing_check = get_scenario_timing(current_scenario_check)
-            
-            if not current_timing_check['is_active'] or current_scenario_check.get('scenario') != 'demo_throttling':
-                logger.info(f"🛑 CANCELLING WAVE ATTACKS: Scenario expired or changed during execution (wave {wave_num + 1}/{num_waves})")
-                break
-            
-            logger.info(f"🌊 Wave {wave_num + 1}/{num_waves}: Launching {wave_size} concurrent transactions...")
-            
-            # Generate batch of transactions for this wave
-            transactions_to_send = []
-            for _ in range(wave_size):
-                transaction = generate_scenario_transaction(scenario_config, special_features)
-                transactions_to_send.append(transaction)
-            
-            # Send wave of concurrent transactions
-            burst_results = send_burst_transactions(transactions_to_send, api_key, max_workers=wave_size)
-            
-            total_successful += burst_results['successful']
-            total_throttled += burst_results['throttled']
-            total_failed += burst_results['failed']
-            
-            logger.info(f"Wave {wave_num + 1} results: {burst_results['successful']} ok, {burst_results['throttled']} throttled, {burst_results['failed']} failed")
-            
-            if burst_results['throttled'] > 0:
-                logger.info(f"🔴 THROTTLING ACHIEVED: Wave {wave_num + 1} hit throttling limits!")
-            
-            # Brief delay before next wave to maintain pressure without overwhelming system
-            if wave_num < num_waves - 1:  # No delay after last wave
-                time.sleep(wave_delay)
+        # Send single burst of concurrent transactions
+        burst_results = send_burst_transactions(transactions_to_send, api_key, max_workers=burst_size)
         
-        successful_count = total_successful
-        throttled_count = total_throttled
-        failed_count = total_failed
+        successful_count = burst_results['successful']
+        throttled_count = burst_results['throttled']
+        failed_count = burst_results['failed']
         
         if throttled_count > 0:
-            logger.info(f"🔴 THROTTLING SUCCESS: {throttled_count}/{total_successful + total_throttled + total_failed} transactions throttled (503 errors)")
+            logger.info(f"🔴 THROTTLING SUCCESS: {throttled_count}/{burst_size} transactions throttled (503 errors)")
         else:
-            logger.info(f"⚠️  THROTTLING FAILED: All {successful_count} transactions succeeded - DDB burst capacity exceeded expectations")
+            logger.info(f"⚠️  No throttling detected: All {successful_count} transactions succeeded")
         
-        logger.info(f"Final results: {successful_count} successful, {throttled_count} throttled, {failed_count} failed")
+        logger.info(f"Burst results: {successful_count} successful, {throttled_count} throttled, {failed_count} failed")
         
     else:
         # Normal sequential mode for other scenarios
@@ -514,7 +502,7 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
         'elapsed_seconds': elapsed_seconds,
         'remaining_seconds': scenario_timing['remaining_seconds'],
         'demo_callout': demo_callout,
-        'burst_mode': use_high_tps
+        'burst_mode': use_burst_mode
     }
     
     total_sent = successful_count + throttled_count + failed_count
