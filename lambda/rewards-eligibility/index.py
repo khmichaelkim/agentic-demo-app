@@ -2,6 +2,10 @@ import json
 import os
 import time
 from aws_xray_sdk.core import xray_recorder
+from aws_xray_sdk.core import patch_all
+
+# Patch all AWS SDK calls for X-Ray tracing
+patch_all()
 
 # Super simple in-memory cache
 _rewards_cache = {}
