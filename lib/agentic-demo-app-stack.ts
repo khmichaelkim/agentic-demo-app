@@ -944,11 +944,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
     // Add Lambda as target
     dataGeneratorRule.addTarget(new targets.LambdaFunction(dataGeneratorFunction));
 
-    // Periodic Throttling Demo Rule - triggers throttling demo every 3 hours
+    // Periodic Throttling Demo Rule - triggers throttling demo every 1 hour
     const periodicThrottleRule = new events.Rule(this, 'PeriodicThrottleRule', {
       ruleName: 'periodic-throttling-demo-schedule',
-      description: 'Trigger throttling demo every 3 hours for automated testing',
-      schedule: events.Schedule.rate(cdk.Duration.hours(3)),
+      description: 'Trigger throttling demo every 1 hour for automated testing',
+      schedule: events.Schedule.rate(cdk.Duration.hours(1)),
       enabled: true,
     });
 
