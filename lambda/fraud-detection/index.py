@@ -4,16 +4,11 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from decimal import Decimal
-from aws_xray_sdk.core import xray_recorder
-from aws_xray_sdk.core import patch_all
 import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Patch all AWS SDK calls for X-Ray tracing
-patch_all()
 
 # Initialize AWS clients
 dynamodb = boto3.resource('dynamodb')
@@ -39,7 +34,6 @@ def decimal_default(obj):
         return float(obj)
     raise TypeError
 
-@xray_recorder.capture('ensure_fraud_rules_exist')
 def ensure_fraud_rules_exist() -> List[Dict[str, Any]]:
     """Ensure fraud rules exist in DynamoDB, populate with defaults if empty (lazy initialization)"""
     try:
@@ -73,7 +67,6 @@ def ensure_fraud_rules_exist() -> List[Dict[str, Any]]:
         logger.info(f"Using {len(default_rules)} embedded default fraud rules as fallback")
         return default_rules
 
-@xray_recorder.capture('get_fraud_rules')
 def get_fraud_rules() -> List[Dict[str, Any]]:
     """Get fraud rules with in-memory caching for performance"""
     global _fraud_rules_cache, _cache_timestamp
@@ -189,7 +182,6 @@ def get_default_fraud_rules() -> List[Dict[str, Any]]:
         }
     ]
 
-@xray_recorder.capture('check_amount_rules')
 def check_amount_rules(transaction: Dict[str, Any], fraud_rules: List[Dict[str, Any]]) -> int:
     """Check amount-based fraud rules"""
     amount_rules = [rule for rule in fraud_rules if rule.get('ruleType') == 'AMOUNT_THRESHOLD']
@@ -215,7 +207,6 @@ def check_amount_rules(transaction: Dict[str, Any], fraud_rules: List[Dict[str, 
     
     return score
 
-@xray_recorder.capture('check_velocity_rules')
 def check_velocity_rules(transaction: Dict[str, Any], fraud_rules: List[Dict[str, Any]]) -> int:
     """Check velocity-based fraud rules (transaction frequency)"""
     velocity_rules = [rule for rule in fraud_rules if rule.get('ruleType') == 'VELOCITY_CHECK']
@@ -264,7 +255,6 @@ def check_velocity_rules(transaction: Dict[str, Any], fraud_rules: List[Dict[str
     
     return score
 
-@xray_recorder.capture('check_location_rules')
 def check_location_rules(transaction: Dict[str, Any], fraud_rules: List[Dict[str, Any]]) -> int:
     """Check location-based fraud rules"""
     location_rules = [rule for rule in fraud_rules if rule.get('ruleType') == 'LOCATION_CHECK']
@@ -289,7 +279,6 @@ def check_location_rules(transaction: Dict[str, Any], fraud_rules: List[Dict[str
     
     return score
 
-@xray_recorder.capture('calculate_risk_score')
 def calculate_risk_score(transaction: Dict[str, Any], fraud_rules: List[Dict[str, Any]]) -> int:
     """Calculate overall risk score for transaction"""
     risk_score = 0
@@ -315,7 +304,6 @@ def determine_risk_level(risk_score: int) -> str:
     else:
         return 'LOW'
 
-@xray_recorder.capture('lambda_handler')
 def handler(event, context):
     """Lambda handler function"""
     logger.info(f"Fraud detection request: {json.dumps(event, default=decimal_default)}")

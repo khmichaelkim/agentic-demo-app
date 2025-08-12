@@ -8,8 +8,6 @@ from typing import Dict, List, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 import requests
-from aws_xray_sdk.core import xray_recorder
-from aws_xray_sdk.core import patch_all
 import logging
 
 # Import scenario management
@@ -26,8 +24,6 @@ from scenarios import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Patch all AWS SDK calls for X-Ray tracing
-patch_all()
 
 # Initialize AWS clients
 secrets_client = boto3.client('secretsmanager')
@@ -84,7 +80,6 @@ TRANSACTION_PATTERNS = {
     }
 }
 
-@xray_recorder.capture('get_current_scenario')
 def get_current_scenario() -> Dict[str, Any]:
     """Get current scenario configuration from DynamoDB"""
     try:
@@ -105,7 +100,6 @@ def get_current_scenario() -> Dict[str, Any]:
         logger.info("Using default scenario due to error")
         return DEFAULT_SCENARIO
 
-@xray_recorder.capture('get_scenario_timing')
 def get_scenario_timing(scenario_config: Dict[str, Any]) -> Dict[str, Any]:
     """Calculate scenario timing information"""
     try:
@@ -132,7 +126,6 @@ def get_scenario_timing(scenario_config: Dict[str, Any]) -> Dict[str, Any]:
             'is_active': True
         }
 
-@xray_recorder.capture('reset_scenario_to_normal')
 def reset_scenario_to_normal():
     """Reset the scenario configuration to normal operation"""
     try:
@@ -155,7 +148,6 @@ def reset_scenario_to_normal():
         logger.error(f"❌ Error resetting scenario to normal: {error}")
         # Continue with default scenario if reset fails
 
-@xray_recorder.capture('cleanup_expired_scenarios')
 def cleanup_expired_scenarios():
     """Proactive cleanup of any expired scenarios that weren't auto-reset"""
     try:
@@ -171,7 +163,6 @@ def cleanup_expired_scenarios():
         logger.error(f"Error during scenario cleanup: {error}")
         return False
 
-@xray_recorder.capture('get_api_key')
 def get_api_key() -> str:
     """Get API key from Secrets Manager"""
     try:
@@ -267,7 +258,6 @@ def calculate_transactions_to_generate(current_tps: int, last_run_time: float = 
     # Ensure we generate at least 1 transaction
     return max(1, actual_transactions)
 
-@xray_recorder.capture('send_transaction')
 def send_transaction(transaction: Dict[str, Any], api_key: str) -> Dict[str, Any]:
     """Send transaction to API Gateway"""
     try:
@@ -293,7 +283,6 @@ def send_transaction(transaction: Dict[str, Any], api_key: str) -> Dict[str, Any
         logger.error(f"Request error: {error}")
         return {'status': 'error', 'error': str(error)}
 
-@xray_recorder.capture('send_burst_transactions')
 def send_burst_transactions(transactions: List[Dict[str, Any]], api_key: str, max_workers: int = 20) -> Dict[str, Any]:
     """Send multiple transactions concurrently using ThreadPoolExecutor"""
     results = {
@@ -332,7 +321,6 @@ def send_burst_transactions(transactions: List[Dict[str, Any]], api_key: str, ma
     logger.info(f"Burst complete: {results['successful']} successful, {results['throttled']} throttled, {results['failed']} failed")
     return results
 
-@xray_recorder.capture('reset_dynamodb_wcu')
 def reset_dynamodb_wcu_to_minimum():
     """Reset DynamoDB TransactionsTable WCU to 1 for throttling demo"""
     try:
@@ -355,7 +343,7 @@ def reset_dynamodb_wcu_to_minimum():
         logger.error(f"❌ Failed to reset DynamoDB WCU: {error}")
         return False
 
-@xray_recorder.capture('generate_forced_scenario_transactions') 
+ 
 def generate_forced_scenario_transactions(api_key: str, force_scenario: str) -> Dict[str, Any]:
     """Generate transactions for a forced scenario (bypasses DynamoDB scenario config)"""
     logger.info(f"🎯 Executing forced scenario: {force_scenario}")
@@ -398,7 +386,6 @@ def generate_forced_scenario_transactions(api_key: str, force_scenario: str) -> 
                                  current_tps, number_of_transactions, special_features, 
                                  demo_callout, elapsed_seconds)
 
-@xray_recorder.capture('execute_scenario_logic')
 def execute_scenario_logic(api_key: str, scenario_config: Dict[str, Any], scenario_timing: Dict[str, Any], 
                           scenario_name: str, current_tps: int, number_of_transactions: int, 
                           special_features: Dict[str, bool], demo_callout: str, elapsed_seconds: int) -> Dict[str, Any]:
@@ -506,7 +493,6 @@ def execute_scenario_logic(api_key: str, scenario_config: Dict[str, Any], scenar
     logger.info(f"Scenario results: {successful_count} successful, {throttled_count} throttled, {failed_count} failed (Total: {total_sent})")
     return result
 
-@xray_recorder.capture('generate_scenario_transactions')
 def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     """Generate and send transactions based on current scenario configuration"""
     
@@ -563,7 +549,6 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
                                  current_tps, number_of_transactions, special_features, 
                                  demo_callout, elapsed_seconds)
 
-@xray_recorder.capture('seed_fraud_rules')
 def seed_fraud_rules():
     """Seed fraud rules into DynamoDB table"""
     try:
@@ -717,7 +702,6 @@ def generate_transaction_batch(pattern: str) -> List[Dict[str, Any]]:
     
     return batch
 
-@xray_recorder.capture('generate_seed_data')
 def generate_seed_data(api_key: str) -> int:
     """Generate a larger batch of initial transactions"""
     batch_size = 20
@@ -755,7 +739,6 @@ def generate_seed_data(api_key: str) -> int:
     
     return total_generated
 
-@xray_recorder.capture('lambda_handler')
 def handler(event, context):
     """Lambda handler function - enhanced for scenario-based generation"""
     logger.info('Scenario-aware data generator started')
@@ -802,7 +785,6 @@ def handler(event, context):
             })
         }
 
-@xray_recorder.capture('seed_handler')
 def seed_handler(event, context):
     """Seed handler for initial data population"""
     logger.info('Seed data generator started')

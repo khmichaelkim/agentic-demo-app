@@ -18,6 +18,17 @@ export class AgenticDemoAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
+    // Application Signals Discovery - Enable Application Signals service discovery
+    const cfnDiscovery = new applicationsignals.CfnDiscovery(this,
+      'ApplicationSignalsServiceRole', { }
+    );
+
+    // ADOT Lambda Layer for Application Signals instrumentation (us-east-1)
+    const adotLayer = lambda.LayerVersion.fromLayerVersionArn(
+      this, 'AwsLambdaLayerForOtel',
+      'arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroPython:16'
+    );
+
     // DynamoDB Tables
     
     // Transactions Table
@@ -121,20 +132,15 @@ export class AgenticDemoAppStack extends cdk.Stack {
       },
     });
 
-    // Create shared dependency layer
-    const dependencyLayer = new lambda.LayerVersion(this, 'PythonDependencyLayer', {
-      code: lambda.Code.fromAsset('layers/dependencies'),
-      compatibleRuntimes: [lambda.Runtime.PYTHON_3_11],
-      description: 'Common Python dependencies: aws-xray-sdk, requests'
-    });
+    // Custom dependency layer no longer needed - using ADOT layer for Application Signals
 
-    // Lambda Function - Fraud Detection with X-Ray Tracing
+    // Lambda Function - Fraud Detection with ADOT Application Signals
     const fraudDetectionFunction = new lambda.Function(this, 'FraudDetectionFunction', {
       functionName: 'fraud-detection-service',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/fraud-detection'),
-      layers: [dependencyLayer],
+      layers: [adotLayer],
       timeout: cdk.Duration.seconds(30),
       memorySize: 256, // 256MB as mentioned in plan for cost optimization
       environment: {
@@ -142,8 +148,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         TRANSACTIONS_TABLE: transactionsTable.tableName,
         RISK_THRESHOLD_HIGH: '80',
         RISK_THRESHOLD_MEDIUM: '50',
-        AWS_XRAY_TRACING_NAME: 'fraud-detection-service',
-        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_TRACES_SAMPLER: "always_on",
         CACHE_BUST: Date.now().toString(), // Force new container with scenario-aware throttling
       },
       logGroup: new logs.LogGroup(this, 'FraudDetectionLogGroup', {
@@ -151,41 +157,49 @@ export class AgenticDemoAppStack extends cdk.Stack {
         retention: logs.RetentionDays.ONE_YEAR,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
-      // Enable X-Ray tracing
-      tracing: lambda.Tracing.ACTIVE,
     });
+
+    // Add Application Signals IAM policy to fraud detection function
+    fraudDetectionFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
 
     // Grant Lambda permissions to read/write DynamoDB tables (fraud detection needs write access for lazy initialization)
     fraudRulesTable.grantReadWriteData(fraudDetectionFunction);
     transactionsTable.grantReadWriteData(fraudDetectionFunction);
 
-    // Lambda Function - Rewards Eligibility Service with X-Ray Tracing
+    // Lambda Function - Rewards Eligibility Service with ADOT Application Signals
     const rewardsEligibilityFunction = new lambda.Function(this, 'RewardsEligibilityFunction', {
       functionName: 'rewards-eligibility-service',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/rewards-eligibility'),
-      layers: [dependencyLayer],
+      layers: [adotLayer],
       timeout: cdk.Duration.seconds(10),
       memorySize: 256,
       environment: {
         USE_CACHE: 'true',
         REWARDS_QUERY_DELAY_MS: '1500',
-        AWS_XRAY_TRACING_NAME: 'rewards-eligibility-service',
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_TRACES_SAMPLER: "always_on",
       },
       logGroup: new logs.LogGroup(this, 'RewardsEligibilityLogGroup', {
         retention: logs.RetentionDays.ONE_YEAR,
       }),
-      tracing: lambda.Tracing.ACTIVE,
     });
 
-    // Lambda Function - Transaction Service with X-Ray Tracing
+    // Add Application Signals IAM policy to rewards eligibility function
+    rewardsEligibilityFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
+
+    // Lambda Function - Transaction Service with ADOT Application Signals
     const transactionServiceFunction = new lambda.Function(this, 'TransactionServiceFunction', {
       functionName: 'transaction-service',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/transaction-service'),
-      layers: [dependencyLayer],
+      layers: [adotLayer],
       timeout: cdk.Duration.seconds(30),
       memorySize: 256, // 256MB as mentioned in plan for cost optimization
       environment: {
@@ -197,8 +211,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         REWARDS_FUNCTION_NAME: rewardsEligibilityFunction.functionName,
         MAX_RETRIES: '0', // Demo-configurable retry count for throttling scenarios
         BASE_DELAY_MS: '0.01', // Demo-configurable base delay for retry scenarios
-        AWS_XRAY_TRACING_NAME: 'transaction-service',
-        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_TRACES_SAMPLER: "always_on",
         CACHE_BUST: Date.now().toString(), // Force new container with simplified throttling
       },
       logGroup: new logs.LogGroup(this, 'TransactionServiceLogGroup', {
@@ -206,36 +220,43 @@ export class AgenticDemoAppStack extends cdk.Stack {
         retention: logs.RetentionDays.ONE_YEAR,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
-      // Enable X-Ray tracing
-      tracing: lambda.Tracing.ACTIVE,
     });
+
+    // Add Application Signals IAM policy to transaction service function
+    transactionServiceFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
 
     // Store reference to transaction service log group for scenario control
     const transactionServiceLogGroup = transactionServiceFunction.logGroup;
 
-    // Lambda Function - Scenario Control for Demo Management
+    // Lambda Function - Scenario Control for Demo Management with ADOT Application Signals
     const scenarioControlFunction = new lambda.Function(this, 'ScenarioControlFunction', {
       functionName: 'scenario-control',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/scenario-control'),
-      layers: [dependencyLayer],
+      layers: [adotLayer],
       timeout: cdk.Duration.seconds(30),
       memorySize: 256,
       environment: {
         SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
         RECENT_TRANSACTIONS_FLOW_TABLE: recentTransactionsFlowTable.tableName,
         TRANSACTION_LOG_GROUP_NAME: transactionServiceLogGroup.logGroupName,
-        AWS_XRAY_TRACING_NAME: 'scenario-control',
-        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_TRACES_SAMPLER: "always_on",
       },
       logGroup: new logs.LogGroup(this, 'ScenarioControlLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-scenario-control',
         retention: logs.RetentionDays.ONE_YEAR,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
-      tracing: lambda.Tracing.ACTIVE,
     });
+
+    // Add Application Signals IAM policy to scenario control function
+    scenarioControlFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
 
     // Grant permissions to the transaction service Lambda
     transactionsTable.grantReadWriteData(transactionServiceFunction);
@@ -888,28 +909,33 @@ export class AgenticDemoAppStack extends cdk.Stack {
     });
     */
 
-    // Data Generator Lambda Function
+    // Data Generator Lambda Function with ADOT Application Signals
     const dataGeneratorFunction = new lambda.Function(this, 'DataGeneratorFunction', {
       functionName: 'transaction-data-generator',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/data-generator'),
-      layers: [dependencyLayer],
+      layers: [adotLayer],
       timeout: cdk.Duration.minutes(5), // Allow time for multiple API calls
       memorySize: 256,
       environment: {
         API_GATEWAY_URL: api.url,
         API_KEY_SECRET_ARN: apiKeySecret.secretArn,
         SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
-        AWS_LAMBDA_EXEC_WRAPPER: '', // Remove OTEL wrapper
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_TRACES_SAMPLER: "always_on",
       },
       logGroup: new logs.LogGroup(this, 'DataGeneratorLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-data-generator',
         retention: logs.RetentionDays.ONE_YEAR,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
-      tracing: lambda.Tracing.ACTIVE, // Enable X-Ray tracing
     });
+
+    // Add Application Signals IAM policy to data generator function
+    dataGeneratorFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
 
     // Grant permissions to data generator
     apiKeySecret.grantRead(dataGeneratorFunction);
@@ -960,22 +986,30 @@ export class AgenticDemoAppStack extends cdk.Stack {
     }));
 
 
-    // Notification Processor Lambda Function - Step 7: Customer Notification
+    // Notification Processor Lambda Function - Step 7: Customer Notification with ADOT Application Signals
     const notificationProcessorFunction = new lambda.Function(this, 'NotificationProcessorFunction', {
       functionName: 'notification-processor',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/notification-processor'),
-      layers: [dependencyLayer],
+      layers: [adotLayer],
       timeout: cdk.Duration.minutes(2),
       memorySize: 256,
+      environment: {
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_TRACES_SAMPLER: "always_on",
+      },
       logGroup: new logs.LogGroup(this, 'NotificationProcessorLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-notification-processor',
         retention: logs.RetentionDays.ONE_YEAR,
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
-      tracing: lambda.Tracing.ACTIVE, // Enable X-Ray tracing
     });
+
+    // Add Application Signals IAM policy to notification processor function
+    notificationProcessorFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
 
     // Grant permissions for notification processor to send CloudWatch metrics
     notificationProcessorFunction.addToRolePolicy(new iam.PolicyStatement({

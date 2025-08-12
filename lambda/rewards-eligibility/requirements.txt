@@ -1,1 +1,1 @@
-aws-xray-sdk==2.12.0
+# No additional requirements - ADOT provides automatic instrumentation

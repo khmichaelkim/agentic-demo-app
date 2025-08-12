@@ -4,16 +4,11 @@ import os
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
-from aws_xray_sdk.core import xray_recorder
-from aws_xray_sdk.core import patch_all
 import logging
 
 # Configure logging for Lambda
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
-# Patch all AWS SDK calls for X-Ray tracing
-patch_all()
 
 # Initialize AWS clients
 dynamodb = boto3.resource('dynamodb')
@@ -68,7 +63,6 @@ PREDEFINED_SCENARIOS = {
     }
 }
 
-@xray_recorder.capture('toggle_rewards_cache')
 def toggle_rewards_cache(enable_cache: bool) -> Dict[str, Any]:
     """Toggle rewards service cache via Lambda environment variable"""
     try:
@@ -102,7 +96,6 @@ def toggle_rewards_cache(enable_cache: bool) -> Dict[str, Any]:
             'message': str(error)
         }
 
-@xray_recorder.capture('get_rewards_cache_status')
 def get_rewards_cache_status() -> Dict[str, Any]:
     """Get current rewards cache status"""
     try:
@@ -123,7 +116,6 @@ def get_rewards_cache_status() -> Dict[str, Any]:
             'message': str(error)
         }
 
-@xray_recorder.capture('reset_table_wcu')
 def reset_table_wcu(target_wcu: int = 1) -> Dict[str, Any]:
     """Reset TransactionsTable WCU to ensure consistent demo conditions"""
     try:
@@ -153,7 +145,6 @@ def reset_table_wcu(target_wcu: int = 1) -> Dict[str, Any]:
         logger.error(f"Error resetting table WCU: {error}")
         return {'status': 'error', 'message': str(error)}
 
-@xray_recorder.capture('trigger_burst_demo')
 def trigger_burst_demo(preset_name: str = None, custom_params: Dict[str, Any] = None, reset_wcu: bool = True) -> Dict[str, Any]:
     """Trigger burst demo by invoking data generator Lambda with event payload"""
     try:
@@ -212,7 +203,6 @@ def trigger_burst_demo(preset_name: str = None, custom_params: Dict[str, Any] = 
             'message': str(error)
         }
 
-@xray_recorder.capture('get_burst_presets')
 def get_burst_presets() -> Dict[str, Any]:
     """Get available burst demo presets"""
     try:
@@ -242,7 +232,6 @@ def get_burst_presets() -> Dict[str, Any]:
             'presets': []
         }
 
-@xray_recorder.capture('get_demo_status')
 def get_demo_status() -> Dict[str, Any]:
     """Get current demo status - simplified for event-driven architecture"""
     try:
@@ -263,7 +252,6 @@ def get_demo_status() -> Dict[str, Any]:
             'message': str(error)
         }
 
-@xray_recorder.capture('get_transaction_flow')
 def get_transaction_flow() -> Dict[str, Any]:
     """Get recent transaction flow from DynamoDB flow table for real-time display"""
     try:
@@ -510,7 +498,6 @@ def _query_logs_for_timerange(
         logger.error(f"Error in {description} query: {error}")
         return [], 'error'
 
-@xray_recorder.capture('get_current_scenario')
 def get_current_scenario() -> Dict[str, Any]:
     """Get current scenario configuration from DynamoDB"""
     try:
@@ -529,7 +516,6 @@ def get_current_scenario() -> Dict[str, Any]:
         logger.error(f"Error getting current scenario: {error}")
         return DEFAULT_SCENARIO
 
-@xray_recorder.capture('set_scenario')
 def set_scenario(scenario_name: str, custom_config: Dict[str, Any] = None) -> Dict[str, Any]:
     """Set current scenario configuration"""
     try:
@@ -560,7 +546,6 @@ def set_scenario(scenario_name: str, custom_config: Dict[str, Any] = None) -> Di
             'message': str(error)
         }
 
-@xray_recorder.capture('get_scenario_status')
 def get_scenario_status() -> Dict[str, Any]:
     """Get current scenario status with timing information"""
     try:
@@ -616,12 +601,10 @@ def get_scenario_status() -> Dict[str, Any]:
             'message': str(error)
         }
 
-@xray_recorder.capture('reset_scenario')
 def reset_scenario() -> Dict[str, Any]:
     """Reset to normal scenario"""
     return set_scenario('normal')
 
-@xray_recorder.capture('list_scenarios')
 def list_scenarios() -> Dict[str, Any]:
     """List all available predefined scenarios"""
     scenarios = []
@@ -652,7 +635,6 @@ def create_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
         'body': json.dumps(body, default=str)
     }
 
-@xray_recorder.capture('lambda_handler')
 def handler(event, context):
     """Lambda handler for scenario control API"""
     logger.info(f"Scenario control request: {json.dumps(event)}")

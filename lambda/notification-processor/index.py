@@ -3,16 +3,11 @@ import boto3
 import os
 from datetime import datetime
 from typing import Dict, Any, List
-from aws_xray_sdk.core import xray_recorder
-from aws_xray_sdk.core import patch_all
 import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Patch all AWS SDK calls for X-Ray tracing
-patch_all()
 
 # Initialize AWS clients
 cloudwatch_client = boto3.client('cloudwatch')
@@ -58,7 +53,6 @@ def send_alert_notification(message: Dict[str, Any]) -> None:
     except Exception as error:
         logger.error(f"Failed to send alert notification for {message.get('transactionId', 'unknown')}: {error}")
 
-@xray_recorder.capture('send_notification_metric')
 def send_notification_metric(notification_type: str, message: Dict[str, Any]) -> None:
     """Send custom metrics for notification processing"""
     try:
@@ -90,7 +84,6 @@ def send_notification_metric(notification_type: str, message: Dict[str, Any]) ->
     except Exception as error:
         logger.error(f"Failed to send notification metric: {error}")
 
-@xray_recorder.capture('process_notification_batch')
 def process_notification_batch(records: List[Dict[str, Any]]) -> Dict[str, int]:
     """Process a batch of SQS notification messages"""
     success_count = 0
@@ -129,7 +122,6 @@ def process_notification_batch(records: List[Dict[str, Any]]) -> Dict[str, int]:
         'errors': error_count
     }
 
-@xray_recorder.capture('lambda_handler')
 def handler(event, context):
     """Lambda handler for processing SQS notification messages"""
     logger.info(f"Notification processor started with {len(event.get('Records', []))} messages")

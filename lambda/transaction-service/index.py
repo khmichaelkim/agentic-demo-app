@@ -7,16 +7,11 @@ import random
 from datetime import datetime
 from typing import Dict, Any, Optional
 from decimal import Decimal
-from aws_xray_sdk.core import xray_recorder
-from aws_xray_sdk.core import patch_all
 import logging
 
 # Configure logging for Lambda
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
-# Patch all AWS SDK calls for X-Ray tracing
-patch_all()
 
 # Initialize AWS clients with retry configuration
 from botocore.config import Config
@@ -89,7 +84,6 @@ def validate_transaction_data(data: Dict[str, Any]) -> tuple[bool, Optional[str]
     
     return True, None
 
-@xray_recorder.capture('calculate_rewards')
 def calculate_rewards(transaction: Dict[str, Any]) -> Dict[str, Any]:
     """Call rewards eligibility service"""
     if not REWARDS_FUNCTION_NAME:
@@ -112,7 +106,6 @@ def calculate_rewards(transaction: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"[{transaction['correlationId']}] Rewards calculation failed: {error}")
         return None
 
-@xray_recorder.capture('perform_fraud_check')
 def perform_fraud_check(transaction: Dict[str, Any]) -> Dict[str, Any]:
     """Call fraud detection Lambda function"""
     try:
@@ -152,7 +145,6 @@ def apply_business_rules(transaction: Dict[str, Any], fraud_result: Dict[str, An
 
     return 'APPROVED'
 
-@xray_recorder.capture('store_transaction_with_retry')
 def store_transaction(transaction: Dict[str, Any]) -> None:
     """Store transaction in DynamoDB with throttling handling"""
     correlation_id = transaction.get('correlationId', 'unknown')
@@ -224,7 +216,6 @@ def send_throttling_metric(metric_name: str, value: float, correlation_id: str) 
     except Exception as error:
         logger.error(f"[{correlation_id}] Failed to send throttling metric {metric_name}: {error}")
 
-@xray_recorder.capture('send_notification')
 def send_notification(transaction: Dict[str, Any]) -> None:
     """Send notification to SQS for all transactions"""
     try:
@@ -270,7 +261,6 @@ def send_notification(transaction: Dict[str, Any]) -> None:
         logger.error(f"[{transaction['correlationId']}] Failed to send notification: {error}")
         # Don't fail the transaction if notification fails
 
-@xray_recorder.capture('send_metrics')
 def send_metrics(transaction: Dict[str, Any], processing_time: float) -> None:
     """Send metrics to CloudWatch"""
     try:
@@ -312,7 +302,6 @@ def send_metrics(transaction: Dict[str, Any], processing_time: float) -> None:
         logger.error(f"Failed to send metrics: {error}")
         # Don't fail the transaction if metrics fail
 
-@xray_recorder.capture('write_to_flow_table')
 def write_to_flow_table(transaction: Dict[str, Any]) -> None:
     """Write transaction to flow table for real-time display"""
     if not flow_table:
@@ -386,7 +375,6 @@ def create_response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
         'body': json.dumps(body)
     }
 
-@xray_recorder.capture('process_transaction')
 def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: float) -> Dict[str, Any]:
     """Process transaction logic"""
     try:
@@ -508,7 +496,6 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
             'message': str(error)
         })
 
-@xray_recorder.capture('lambda_handler')
 def handler(event, context):
     """Lambda handler function"""
     logger.info(f"Event received: {json.dumps(event)}")
