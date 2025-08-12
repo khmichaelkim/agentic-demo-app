@@ -355,20 +355,24 @@ def reset_dynamodb_wcu_to_minimum():
         logger.error(f"❌ Failed to reset DynamoDB WCU: {error}")
         return False
 
-@xray_recorder.capture('generate_scenario_transactions')
-def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
-    """Generate and send transactions based on current scenario configuration"""
+@xray_recorder.capture('generate_forced_scenario_transactions') 
+def generate_forced_scenario_transactions(api_key: str, force_scenario: str) -> Dict[str, Any]:
+    """Generate transactions for a forced scenario (bypasses DynamoDB scenario config)"""
+    logger.info(f"🎯 Executing forced scenario: {force_scenario}")
     
-    # Proactive cleanup of expired scenarios
-    cleanup_expired_scenarios()
+    # Get scenario configuration from scenarios.py
+    from scenarios import get_scenario_config
+    scenario_config = get_scenario_config(force_scenario)
     
-    # Get current scenario configuration
-    scenario_config = get_current_scenario()
+    # Set a fresh start time for this forced execution
+    scenario_config['startTime'] = datetime.utcnow().isoformat() + 'Z'
+    
+    # Calculate scenario timing based on forced config
     scenario_timing = get_scenario_timing(scenario_config)
     
     # Get scenario info
-    scenario_name = scenario_config.get('scenario', 'normal')
-    elapsed_seconds = scenario_timing['elapsed_seconds']
+    scenario_name = scenario_config.get('scenario', force_scenario)
+    elapsed_seconds = 0  # Fresh start for forced scenario
     
     # Calculate current TPS based on scenario and timing
     current_tps = calculate_current_tps(scenario_config, elapsed_seconds)
@@ -379,33 +383,26 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     # Get special features for this scenario
     special_features = should_use_special_features(scenario_config)
     
-    # Check for demo callouts
+    # Get demo callouts
     demo_callout = get_demo_callout(scenario_config, elapsed_seconds)
     
-    logger.info(f"Scenario '{scenario_name}' - TPS: {current_tps}, "
+    logger.info(f"Forced scenario '{scenario_name}' - TPS: {current_tps}, "
                 f"Generating: {number_of_transactions} transactions, "
-                f"Elapsed: {elapsed_seconds}s, Remaining: {scenario_timing['remaining_seconds']}s")
+                f"Duration: {scenario_config.get('duration', 0)}s")
     
     if demo_callout:
         logger.info(f"Demo callout: {demo_callout}")
     
-    # Check if scenario is still active - auto-reset to normal when expired
-    if not scenario_timing['is_active']:
-        logger.info(f"🔄 Scenario '{scenario_name}' has EXPIRED after {elapsed_seconds}s, auto-resetting to 'normal'")
-        
-        # Automatically reset scenario to normal
-        reset_scenario_to_normal()
-        
-        # Re-fetch scenario config after reset
-        scenario_config = get_current_scenario()
-        scenario_timing = get_scenario_timing(scenario_config)
-        scenario_name = scenario_config.get('scenario', 'normal')
-        
-        # Recalculate with normal scenario
-        current_tps = calculate_current_tps(scenario_config, 0)  # Reset elapsed time
-        number_of_transactions = calculate_transactions_to_generate(current_tps)
-        
-        logger.info(f"✅ Auto-reset complete: Now running '{scenario_name}' scenario with {current_tps} TPS")
+    # Execute the forced scenario logic (same as regular scenario execution)
+    return execute_scenario_logic(api_key, scenario_config, scenario_timing, scenario_name, 
+                                 current_tps, number_of_transactions, special_features, 
+                                 demo_callout, elapsed_seconds)
+
+@xray_recorder.capture('execute_scenario_logic')
+def execute_scenario_logic(api_key: str, scenario_config: Dict[str, Any], scenario_timing: Dict[str, Any], 
+                          scenario_name: str, current_tps: int, number_of_transactions: int, 
+                          special_features: Dict[str, bool], demo_callout: str, elapsed_seconds: int) -> Dict[str, Any]:
+    """Common execution logic for both regular and forced scenarios"""
     
     successful_count = 0
     failed_count = 0
@@ -414,9 +411,9 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     # Check if we should use burst mode for throttling demo
     use_burst_mode = False
     
-    if scenario_name == 'demo_throttling' and scenario_timing['is_active']:
+    if scenario_name == 'demo_throttling':
         use_burst_mode = True
-        logger.info(f"🔥 Throttling scenario active: {scenario_timing['remaining_seconds']}s remaining")
+        logger.info(f"🔥 Throttling scenario active - executing burst mode")
         
         # Reset DynamoDB WCU to 1 before starting burst
         if special_features.get('reset_wcu'):
@@ -492,7 +489,7 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
             except Exception as error:
                 logger.error(f"Error generating transaction {i}: {error}")
                 failed_count += 1
-    
+
     result = {
         'successful_count': successful_count,
         'failed_count': failed_count,
@@ -500,7 +497,7 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
         'scenario': scenario_name,
         'current_tps': current_tps,
         'elapsed_seconds': elapsed_seconds,
-        'remaining_seconds': scenario_timing['remaining_seconds'],
+        'remaining_seconds': scenario_timing.get('remaining_seconds', 0),
         'demo_callout': demo_callout,
         'burst_mode': use_burst_mode
     }
@@ -508,6 +505,63 @@ def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
     total_sent = successful_count + throttled_count + failed_count
     logger.info(f"Scenario results: {successful_count} successful, {throttled_count} throttled, {failed_count} failed (Total: {total_sent})")
     return result
+
+@xray_recorder.capture('generate_scenario_transactions')
+def generate_scenario_transactions(api_key: str) -> Dict[str, Any]:
+    """Generate and send transactions based on current scenario configuration"""
+    
+    # Proactive cleanup of expired scenarios
+    cleanup_expired_scenarios()
+    
+    # Get current scenario configuration
+    scenario_config = get_current_scenario()
+    scenario_timing = get_scenario_timing(scenario_config)
+    
+    # Get scenario info
+    scenario_name = scenario_config.get('scenario', 'normal')
+    elapsed_seconds = scenario_timing['elapsed_seconds']
+    
+    # Calculate current TPS based on scenario and timing
+    current_tps = calculate_current_tps(scenario_config, elapsed_seconds)
+    
+    # Calculate how many transactions to generate
+    number_of_transactions = calculate_transactions_to_generate(current_tps)
+    
+    # Get special features for this scenario
+    special_features = should_use_special_features(scenario_config)
+    
+    # Check for demo callouts
+    demo_callout = get_demo_callout(scenario_config, elapsed_seconds)
+    
+    logger.info(f"Scenario '{scenario_name}' - TPS: {current_tps}, "
+                f"Generating: {number_of_transactions} transactions, "
+                f"Elapsed: {elapsed_seconds}s, Remaining: {scenario_timing['remaining_seconds']}s")
+    
+    if demo_callout:
+        logger.info(f"Demo callout: {demo_callout}")
+    
+    # Check if scenario is still active - auto-reset to normal when expired
+    if not scenario_timing['is_active']:
+        logger.info(f"🔄 Scenario '{scenario_name}' has EXPIRED after {elapsed_seconds}s, auto-resetting to 'normal'")
+        
+        # Automatically reset scenario to normal
+        reset_scenario_to_normal()
+        
+        # Re-fetch scenario config after reset
+        scenario_config = get_current_scenario()
+        scenario_timing = get_scenario_timing(scenario_config)
+        scenario_name = scenario_config.get('scenario', 'normal')
+        
+        # Recalculate with normal scenario
+        current_tps = calculate_current_tps(scenario_config, 0)  # Reset elapsed time
+        number_of_transactions = calculate_transactions_to_generate(current_tps)
+        
+        logger.info(f"✅ Auto-reset complete: Now running '{scenario_name}' scenario with {current_tps} TPS")
+    
+    # Use shared execution logic
+    return execute_scenario_logic(api_key, scenario_config, scenario_timing, scenario_name, 
+                                 current_tps, number_of_transactions, special_features, 
+                                 demo_callout, elapsed_seconds)
 
 @xray_recorder.capture('seed_fraud_rules')
 def seed_fraud_rules():
@@ -710,8 +764,14 @@ def handler(event, context):
         # Get API key from Secrets Manager
         api_key = get_api_key()
         
-        # Generate and send transactions based on current scenario
-        result = generate_scenario_transactions(api_key)
+        # Check for forced scenario override from EventBridge
+        force_scenario = event.get('forceScenario')
+        if force_scenario:
+            logger.info(f"🔄 EventBridge forced scenario override: {force_scenario}")
+            result = generate_forced_scenario_transactions(api_key, force_scenario)
+        else:
+            # Generate and send transactions based on current scenario
+            result = generate_scenario_transactions(api_key)
         
         logger.info(f"Scenario generation completed: {result}")
         
