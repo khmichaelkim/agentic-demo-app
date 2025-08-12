@@ -19,9 +19,10 @@ export class AgenticDemoAppStack extends cdk.Stack {
     super(scope, id, props);
 
     // Application Signals Discovery - Enable Application Signals service discovery
-    const cfnDiscovery = new applicationsignals.CfnDiscovery(this,
-      'ApplicationSignalsServiceRole', { }
-    );
+    // Note: Commented out because Application Signals is already enabled at account level
+    // const cfnDiscovery = new applicationsignals.CfnDiscovery(this,
+    //   'AgenticDemoAppSignalsDiscovery', { }
+    // );
 
     // ADOT Lambda Layer for Application Signals instrumentation (us-east-1)
     const adotLayer = lambda.LayerVersion.fromLayerVersionArn(
