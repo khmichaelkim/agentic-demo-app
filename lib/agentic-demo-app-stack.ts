@@ -916,15 +916,15 @@ export class AgenticDemoAppStack extends cdk.Stack {
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/data-generator'),
-      layers: [adotLayer],
+      layers: [adotLayer], // Keep layer for requests library, but no instrumentation
       timeout: cdk.Duration.minutes(5), // Allow time for multiple API calls
       memorySize: 256,
+      tracing: lambda.Tracing.DISABLED, // Disable X-Ray to prevent trace propagation in burst tests
       environment: {
         API_GATEWAY_URL: api.url,
         API_KEY_SECRET_ARN: apiKeySecret.secretArn,
         SCENARIO_CONFIG_TABLE: scenarioConfigTable.tableName,
-        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
-        OTEL_TRACES_SAMPLER: "always_on",
+        // Removed ADOT instrumentation environment variables to prevent trace creation
       },
       logGroup: new logs.LogGroup(this, 'DataGeneratorLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-data-generator',
@@ -933,10 +933,10 @@ export class AgenticDemoAppStack extends cdk.Stack {
       }),
     });
 
-    // Add Application Signals IAM policy to data generator function
-    dataGeneratorFunction.role?.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
-    );
+    // Skip Application Signals IAM policy for data generator (no ADOT instrumentation)
+    // dataGeneratorFunction.role?.addManagedPolicy(
+    //   iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    // );
 
     // Grant permissions to data generator
     apiKeySecret.grantRead(dataGeneratorFunction);
