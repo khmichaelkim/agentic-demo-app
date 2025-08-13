@@ -179,7 +179,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(10),
       memorySize: 256,
       environment: {
-        USE_CACHE: 'true',
+        USE_CACHE: 'false',
         REWARDS_QUERY_DELAY_MS: '1500',
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
         OTEL_TRACES_SAMPLER: "always_on",
