@@ -4,10 +4,14 @@ import boto3
 import os
 import time
 import random
+import requests
 from datetime import datetime
 from typing import Dict, Any, Optional
 from decimal import Decimal
 import logging
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
+from urllib.parse import urlparse
 
 # Configure logging for Lambda
 logger = logging.getLogger()
@@ -38,6 +42,7 @@ RECENT_TRANSACTIONS_FLOW_TABLE = os.environ.get('RECENT_TRANSACTIONS_FLOW_TABLE'
 SQS_QUEUE_URL = os.environ['SQS_QUEUE_URL']
 FRAUD_FUNCTION_NAME = os.environ['LAMBDA_FRAUD_FUNCTION_NAME']
 REWARDS_FUNCTION_NAME = os.environ.get('REWARDS_FUNCTION_NAME')
+CARD_VERIFICATION_URL = os.environ.get('CARD_VERIFICATION_URL')
 
 # Get DynamoDB table references
 transactions_table = dynamodb.Table(TRANSACTIONS_TABLE)
@@ -105,6 +110,74 @@ def calculate_rewards(transaction: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as error:
         logger.error(f"[{transaction['correlationId']}] Rewards calculation failed: {error}")
         return None
+
+def verify_card(transaction: Dict[str, Any]) -> tuple[bool, Optional[str]]:
+    """Call card verification service via HTTP with IAM authentication (external service pattern)"""
+    # Skip if verification URL is not configured
+    if not CARD_VERIFICATION_URL:
+        logger.warning(f"[{transaction['correlationId']}] Card verification URL not configured, skipping verification")
+        return True, None
+        
+    try:
+        # Prepare verification payload
+        payload = {
+            'correlationId': transaction['correlationId'],
+            'transactionId': transaction['transactionId']
+        }
+        payload_json = json.dumps(payload)
+        
+        # Parse the URL
+        parsed_url = urlparse(CARD_VERIFICATION_URL)
+        
+        # Create AWS request for SigV4 signing
+        request = AWSRequest(
+            method='POST',
+            url=CARD_VERIFICATION_URL,
+            data=payload_json,
+            headers={
+                'Content-Type': 'application/json',
+                'Host': parsed_url.netloc
+            }
+        )
+        
+        # Get credentials from boto3 session
+        session = boto3.Session()
+        credentials = session.get_credentials()
+        region = session.region_name or 'us-east-1'
+        
+        # Sign the request with SigV4
+        SigV4Auth(credentials, 'lambda', region).add_auth(request)
+        
+        # Call card verification service with signed request
+        logger.info(f"[{transaction['correlationId']}] Calling card verification service with IAM auth")
+        response = requests.post(
+            CARD_VERIFICATION_URL,
+            data=payload_json,
+            headers=dict(request.headers),
+            timeout=5.0
+        )
+        
+        # Process response
+        if response.status_code == 200:
+            logger.info(f"[{transaction['correlationId']}] Card verification successful")
+            return True, None
+        elif response.status_code == 403:
+            error_msg = f"Card verification failed - IAM authentication error (403)"
+            logger.error(f"[{transaction['correlationId']}] {error_msg}: {response.text}")
+            return False, error_msg
+        else:
+            error_msg = f"Card verification failed with status {response.status_code}"
+            logger.error(f"[{transaction['correlationId']}] {error_msg}: {response.text}")
+            return False, error_msg
+            
+    except requests.RequestException as error:
+        error_msg = f"Card verification service unavailable: {str(error)}"
+        logger.error(f"[{transaction['correlationId']}] {error_msg}")
+        return False, error_msg
+    except Exception as error:
+        error_msg = f"Card verification error: {str(error)}"
+        logger.error(f"[{transaction['correlationId']}] {error_msg}")
+        return False, error_msg
 
 def perform_fraud_check(transaction: Dict[str, Any]) -> Dict[str, Any]:
     """Call fraud detection Lambda function"""
@@ -387,7 +460,7 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
                 'details': error_message,
                 'correlationId': correlation_id
             })
-
+        
         transaction_data = {
             **body,
             'transactionId': str(uuid.uuid4()),
@@ -395,8 +468,25 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
             'correlationId': correlation_id,
             'status': 'PROCESSING'
         }
-
+        
         logger.info(f"[{correlation_id}] Generated transaction: {json.dumps(transaction_data)}")
+        
+        # Call card verification service - fails fast if card verification fails
+        is_verified, verification_error = verify_card(transaction_data)
+        if not is_verified:
+            # Card verification failed, return error to client
+            send_metric('CardVerificationError', 1, correlation_id)
+            write_to_flow_table({
+                **transaction_data,
+                'status': 'DECLINED',
+                'error': verification_error
+            })
+            return create_response(503, {
+                'error': 'Card verification failed',
+                'reason': verification_error,
+                'correlationId': correlation_id,
+                'transactionId': transaction_data['transactionId']
+            })
 
         # Call fraud detection Lambda
         fraud_result = perform_fraud_check(transaction_data)
@@ -472,7 +562,10 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
         }
         logger.info(f"[{correlation_id}] Transaction completed: {json.dumps(flow_data)}")
         
-        status_code = 201 if transaction_data['status'] == 'APPROVED' else 402
+        # Use 200 for all successful API calls, status in response body
+        # 201 for resource creation (approved transactions that create a new resource)
+        # 200 for declined transactions (successfully processed but declined)
+        status_code = 201 if transaction_data['status'] == 'APPROVED' else 200
         return create_response(status_code, response)
 
     except DynamoDBThrottlingError as throttling_error:

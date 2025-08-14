@@ -134,6 +134,48 @@ export class AgenticDemoAppStack extends cdk.Stack {
 
     // Custom dependency layer no longer needed - using ADOT layer for Application Signals
 
+    // Note: Using IAM authentication instead of API secret for security
+
+    // Lambda Function - Card Verification Service with ADOT Application Signals and Function URL
+    const cardVerificationFunction = new lambda.Function(this, 'CardVerificationFunction', {
+      functionName: 'card-verification-service',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/card-verification'),
+      layers: [adotLayer],
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 128,
+      environment: {
+        FAILURE_RATE: '0.05', // 5% failure rate by default
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=card-verification-service,deployment.environment=lambda',
+        OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_SERVICE_NAME: 'card-verification-service',
+      },
+      logGroup: new logs.LogGroup(this, 'CardVerificationLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-card-verification-service',
+        retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+    });
+
+    // Add Application Signals IAM policy to card verification function
+    cardVerificationFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
+
+    // Create Function URL for card verification service with IAM authentication
+    const cardVerificationFunctionUrl = cardVerificationFunction.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.AWS_IAM, // Use IAM authentication for security
+      cors: {
+        allowedOrigins: ['*'],
+        allowedMethods: [lambda.HttpMethod.ALL],
+        allowCredentials: true,
+        allowedHeaders: ['*'],
+        exposedHeaders: ['*']
+      }
+    });
+
     // Lambda Function - Fraud Detection with ADOT Application Signals
     const fraudDetectionFunction = new lambda.Function(this, 'FraudDetectionFunction', {
       functionName: 'fraud-detection-service',
@@ -184,7 +226,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         OTEL_TRACES_SAMPLER: "always_on",
       },
       logGroup: new logs.LogGroup(this, 'RewardsEligibilityLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-rewards-eligibility-service',
         retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
     });
 
@@ -209,6 +253,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         SQS_QUEUE_URL: notificationQueue.queueUrl,
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
         REWARDS_FUNCTION_NAME: rewardsEligibilityFunction.functionName,
+        CARD_VERIFICATION_URL: cardVerificationFunctionUrl.url,
         MAX_RETRIES: '0', // Demo-configurable retry count for throttling scenarios
         BASE_DELAY_MS: '0.01', // Demo-configurable base delay for retry scenarios
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
@@ -265,6 +310,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
     notificationQueue.grantSendMessages(transactionServiceFunction);
     fraudDetectionFunction.grantInvoke(transactionServiceFunction);
     rewardsEligibilityFunction.grantInvoke(transactionServiceFunction);
+    
+    // Grant transaction service permission to invoke the card verification Function URL
+    cardVerificationFunction.grantInvokeUrl(transactionServiceFunction);
 
     // Grant permissions to the scenario control Lambda
     scenarioConfigTable.grantReadWriteData(scenarioControlFunction);
@@ -529,6 +577,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
         new cloudwatch.Metric({
           namespace: 'TransactionProcessing',
           metricName: 'ProcessingError', 
+          statistic: 'Sum',
+        }),
+        new cloudwatch.Metric({
+          namespace: 'TransactionProcessing',
+          metricName: 'CardVerificationError', 
           statistic: 'Sum',
         }),
       ],
