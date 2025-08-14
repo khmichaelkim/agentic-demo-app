@@ -1,9 +1,11 @@
 import json
 import boto3
 import os
+import inspect
 from datetime import datetime
 from typing import Dict, Any, List
 import logging
+from opentelemetry import trace
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -11,6 +13,26 @@ logger = logging.getLogger(__name__)
 
 # Initialize AWS clients
 cloudwatch_client = boto3.client('cloudwatch')
+
+def add_code_location_attributes():
+    """
+    Add code location attributes to the current span following OpenTelemetry semantic conventions.
+    Adds code.file.path, code.line.number, and code.function.name attributes for observability.
+    """
+    span = trace.get_current_span()
+    if span:
+        # Get caller information from the stack
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            caller_frame = frame.f_back
+            file_name = os.path.basename(caller_frame.f_code.co_filename)
+            line_number = caller_frame.f_lineno
+            function_name = f"{caller_frame.f_code.co_name}"
+            
+            # Add attributes using OpenTelemetry semantic conventions
+            span.set_attribute("code.file.path", file_name)
+            span.set_attribute("code.line.number", line_number)
+            span.set_attribute("code.function.name", function_name)
 
 def send_success_notification(message: Dict[str, Any]) -> None:
     """Handle successful transaction notifications"""
@@ -124,6 +146,9 @@ def process_notification_batch(records: List[Dict[str, Any]]) -> Dict[str, int]:
 
 def handler(event, context):
     """Lambda handler for processing SQS notification messages"""
+    # Add code location attributes to the auto-instrumented server span
+    add_code_location_attributes()
+    
     logger.info(f"Notification processor started with {len(event.get('Records', []))} messages")
     
     try:

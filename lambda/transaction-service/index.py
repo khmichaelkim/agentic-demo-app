@@ -5,6 +5,7 @@ import os
 import time
 import random
 import requests
+import inspect
 from datetime import datetime
 from typing import Dict, Any, Optional
 from decimal import Decimal
@@ -12,6 +13,7 @@ import logging
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from urllib.parse import urlparse
+from opentelemetry import trace
 
 # Configure logging for Lambda
 logger = logging.getLogger()
@@ -48,6 +50,26 @@ CARD_VERIFICATION_URL = os.environ.get('CARD_VERIFICATION_URL')
 transactions_table = dynamodb.Table(TRANSACTIONS_TABLE)
 fraud_rules_table = dynamodb.Table(FRAUD_RULES_TABLE)
 flow_table = dynamodb.Table(RECENT_TRANSACTIONS_FLOW_TABLE) if RECENT_TRANSACTIONS_FLOW_TABLE else None
+
+def add_code_location_attributes():
+    """
+    Add code location attributes to the current span following OpenTelemetry semantic conventions.
+    Adds code.file.path, code.line.number, and code.function.name attributes for observability.
+    """
+    span = trace.get_current_span()
+    if span:
+        # Get caller information from the stack
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            caller_frame = frame.f_back
+            file_name = os.path.basename(caller_frame.f_code.co_filename)
+            line_number = caller_frame.f_lineno
+            function_name = f"{caller_frame.f_code.co_name}"
+            
+            # Add attributes using OpenTelemetry semantic conventions
+            span.set_attribute("code.file.path", file_name)
+            span.set_attribute("code.line.number", line_number)
+            span.set_attribute("code.function.name", function_name)
 
 def convert_floats_to_decimal(data: Dict[str, Any]) -> Dict[str, Any]:
     """Convert float values to Decimal for DynamoDB storage"""
@@ -591,6 +613,9 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
 
 def handler(event, context):
     """Lambda handler function"""
+    # Add code location attributes to the auto-instrumented server span
+    add_code_location_attributes()
+    
     logger.info(f"Event received: {json.dumps(event)}")
     
     correlation_id = str(uuid.uuid4())

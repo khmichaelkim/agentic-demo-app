@@ -1,10 +1,12 @@
 import json
 import boto3
 import os
+import inspect
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from decimal import Decimal
 import logging
+from opentelemetry import trace
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +29,26 @@ transactions_table = dynamodb.Table(TRANSACTIONS_TABLE)
 _fraud_rules_cache = None
 _cache_timestamp = None
 CACHE_TTL_MINUTES = 10  # Cache rules for 10 minutes
+
+def add_code_location_attributes():
+    """
+    Add code location attributes to the current span following OpenTelemetry semantic conventions.
+    Adds code.file.path, code.line.number, and code.function.name attributes for observability.
+    """
+    span = trace.get_current_span()
+    if span:
+        # Get caller information from the stack
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            caller_frame = frame.f_back
+            file_name = os.path.basename(caller_frame.f_code.co_filename)
+            line_number = caller_frame.f_lineno
+            function_name = f"{caller_frame.f_code.co_name}"
+            
+            # Add attributes using OpenTelemetry semantic conventions
+            span.set_attribute("code.file.path", file_name)
+            span.set_attribute("code.line.number", line_number)
+            span.set_attribute("code.function.name", function_name)
 
 def decimal_default(obj):
     """JSON serializer for Decimal objects"""
@@ -306,6 +328,9 @@ def determine_risk_level(risk_score: int) -> str:
 
 def handler(event, context):
     """Lambda handler function"""
+    # Add code location attributes to the auto-instrumented server span
+    add_code_location_attributes()
+    
     logger.info(f"Fraud detection request: {json.dumps(event, default=decimal_default)}")
 
     try:
