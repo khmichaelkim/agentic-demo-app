@@ -31,7 +31,7 @@ flow_table = dynamodb.Table(RECENT_TRANSACTIONS_FLOW_TABLE) if RECENT_TRANSACTIO
 DEFAULT_SCENARIO = {
     'configId': 'current',
     'scenario': 'normal',
-    'tps': 12,
+    'tps': 200,  # Increased to 200 to generate sustained throttling pressure
     'duration': 300,
     'pattern': {
         'type': 'steady'
@@ -42,10 +42,10 @@ DEFAULT_SCENARIO = {
 PREDEFINED_SCENARIOS = {
     'normal': {
         'scenario': 'normal',
-        'tps': 12,
+        'tps': 200, # Increased to 200 to generate sustained throttling pressure
         'duration': 300,
         'pattern': {'type': 'steady'},
-        'description': 'Normal steady traffic (12 transactions per minute)'
+        'description': 'Normal steady traffic'
     },
     'demo_throttling': {
         'scenario': 'demo_throttling',

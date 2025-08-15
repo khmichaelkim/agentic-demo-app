@@ -146,7 +146,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(10),
       memorySize: 128,
       environment: {
-        FAILURE_RATE: '0.05', // 5% failure rate by default
+        FAILURE_RATE: '0.01', // 1% failure rate by default
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
         OTEL_RESOURCE_ATTRIBUTES: 'service.name=card-verification-service,deployment.environment=lambda',
         OTEL_TRACES_SAMPLER: "always_on",
@@ -982,7 +982,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/data-generator'),
       layers: [adotLayer], // Keep layer for requests library, but no instrumentation
-      timeout: cdk.Duration.minutes(5), // Allow time for multiple API calls
+      timeout: cdk.Duration.minutes(10), // Extended for burst testing with 2000 transactions
       memorySize: 256,
       tracing: lambda.Tracing.DISABLED, // Disable X-Ray to prevent trace propagation in burst tests
       environment: {
@@ -1041,7 +1041,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       ruleName: 'periodic-throttling-demo-schedule',
       description: 'Trigger throttling demo every 1 hour for automated testing',
       schedule: events.Schedule.rate(cdk.Duration.hours(1)),
-      enabled: true,
+      enabled: false, // Disabled - trigger manually when needed for demos
     });
 
     // Add data generator as target with forceScenario override

@@ -9,7 +9,7 @@ from datetime import datetime
 # Default scenario configuration
 DEFAULT_SCENARIO = {
     'scenario': 'normal',
-    'tps': 5,
+    'tps': 200,  # Increased to 200 to generate sustained throttling pressure
     'duration': 300,
     'pattern': {
         'type': 'steady'
@@ -21,7 +21,7 @@ DEFAULT_SCENARIO = {
 DEMO_SCENARIOS = {
     'normal': {
         'scenario': 'normal',
-        'tps': 5,
+        'tps': 200,  # Increased to 200 to generate sustained throttling pressure
         'duration': 300,
         'pattern': {'type': 'steady'},
         'description': 'Normal steady traffic - baseline for demos',
