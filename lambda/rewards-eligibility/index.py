@@ -2,7 +2,12 @@ import json
 import os
 import time
 import inspect
+import logging
 from opentelemetry import trace
+
+# Configure logging - use Lambda's built-in logging system (exactly like transaction service)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 # Super simple in-memory cache
 _rewards_cache = {}
@@ -19,7 +24,7 @@ def _initialize_cache():
             'tier': 'GOLD',
             'cache_used': True
         }
-    print(f"Pre-populated cache with {len(common_users)} users to avoid cold container cache misses")
+    logger.info(f"Pre-populated cache with {len(common_users)} users to avoid cold container cache misses")
 
 # Initialize cache on container startup to prevent cache miss latency spikes
 _initialize_cache()
@@ -52,6 +57,11 @@ def handler(event, context):
     # Add code location attributes to the auto-instrumented server span
     add_code_location_attributes()
     
+    # Manual trace/span ID injection for distributed tracing correlation
+    ctx = trace.get_current_span().get_span_context()
+    trace_id = '{trace:032x}'.format(trace=ctx.trace_id)
+    span_id = '{span:016x}'.format(span=ctx.span_id)
+    
     use_cache = os.environ.get('USE_CACHE', 'false').lower() == 'true'
     delay_ms = int(os.environ.get('REWARDS_QUERY_DELAY_MS', '1500'))  # Restored to 1500ms for demo scenarios
     
@@ -59,12 +69,14 @@ def handler(event, context):
     user_id = event.get('userId', 'unknown')
     amount = event.get('amount', 0)
     
+    logger.info(f"Rewards eligibility request for user {user_id}, amount {amount}, cache={use_cache} trace_id={trace_id} span_id={span_id}")
+    
     # Simple cache key - just userId for better hit rate
     cache_key = user_id
     
     # Check cache if enabled
     if use_cache and cache_key in _rewards_cache:
-        print(f"Cache hit for user {user_id}")
+        logger.info(f"Cache hit for user {user_id}")
         # Return cached response but update points for current amount
         cached = _rewards_cache[cache_key].copy()
         cached['points_earned'] = int(amount * 10)
@@ -72,7 +84,7 @@ def handler(event, context):
     
     # Simulate slow database query when cache is disabled or on cache miss
     if not use_cache or cache_key not in _rewards_cache:
-        print(f"Cache {'miss' if use_cache else 'disabled'} - simulating slow database query")
+        logger.info(f"Cache {'miss' if use_cache else 'disabled'} - simulating slow database query")
         time.sleep(delay_ms / 1000.0)
     
     # Super simple rewards response - just return something

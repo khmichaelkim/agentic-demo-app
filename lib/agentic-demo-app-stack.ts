@@ -192,7 +192,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
         RISK_THRESHOLD_MEDIUM: '50',
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
         OTEL_TRACES_SAMPLER: "always_on",
-        CACHE_BUST: Date.now().toString(), // Force new container with scenario-aware throttling
+        // Fixed: Use root logger (like transaction service) + manual trace/span extraction
+        OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false", // Disable OTLP hijacking
+        OTEL_PYTHON_LOG_CORRELATION: "true", // Enable trace/span ID correlation
+        PYTHONUNBUFFERED: "1", // Force unbuffered output for immediate log visibility
+        CACHE_BUST: Date.now().toString(), // Force redeploy with manual trace extraction
       },
       logGroup: new logs.LogGroup(this, 'FraudDetectionLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-fraud-detection',
@@ -224,6 +228,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
         REWARDS_QUERY_DELAY_MS: '1500',
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
         OTEL_TRACES_SAMPLER: "always_on",
+        // Fixed: Use root logger (like transaction service) + manual trace/span extraction
+        OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false", // Disable OTLP hijacking
+        OTEL_PYTHON_LOG_CORRELATION: "true", // Enable trace/span ID correlation
+        PYTHONUNBUFFERED: "1", // Force unbuffered output for immediate log visibility
+        CACHE_BUST: Date.now().toString(), // Force redeploy with manual trace extraction
       },
       logGroup: new logs.LogGroup(this, 'RewardsEligibilityLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-rewards-eligibility-service',
@@ -258,7 +267,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
         BASE_DELAY_MS: '0.01', // Demo-configurable base delay for retry scenarios
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
         OTEL_TRACES_SAMPLER: "always_on",
-        CACHE_BUST: Date.now().toString(), // Force new container with simplified throttling
+        // Fixed: Use root logger (like transaction service) + manual trace/span extraction
+        OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false", // Disable OTLP hijacking
+        OTEL_PYTHON_LOG_CORRELATION: "true", // Enable trace/span ID correlation
+        PYTHONUNBUFFERED: "1", // Force unbuffered output for immediate log visibility
+        CACHE_BUST: Date.now().toString(), // Force redeploy with manual trace extraction
       },
       logGroup: new logs.LogGroup(this, 'TransactionServiceLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-transaction-service',
@@ -1051,6 +1064,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
       environment: {
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
         OTEL_TRACES_SAMPLER: "always_on",
+        // Fixed: Use root logger (like transaction service) + manual trace/span extraction
+        OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false", // Disable OTLP hijacking
+        OTEL_PYTHON_LOG_CORRELATION: "true", // Enable trace/span ID correlation
+        PYTHONUNBUFFERED: "1", // Force unbuffered output for immediate log visibility
+        CACHE_BUST: Date.now().toString(), // Force redeploy with manual trace extraction
       },
       logGroup: new logs.LogGroup(this, 'NotificationProcessorLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-notification-processor',

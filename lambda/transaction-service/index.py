@@ -19,6 +19,13 @@ from opentelemetry import trace
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+def get_trace_span_ids():
+    """Extract current trace and span IDs for logging correlation"""
+    ctx = trace.get_current_span().get_span_context()
+    trace_id = '{trace:032x}'.format(trace=ctx.trace_id)
+    span_id = '{span:016x}'.format(span=ctx.span_id)
+    return trace_id, span_id
+
 # Initialize AWS clients with retry configuration
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -491,7 +498,8 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
             'status': 'PROCESSING'
         }
         
-        logger.info(f"[{correlation_id}] Generated transaction: {json.dumps(transaction_data)}")
+        trace_id, span_id = get_trace_span_ids()
+        logger.info(f"Generated transaction: {json.dumps(transaction_data)} correlation_id={correlation_id} trace_id={trace_id} span_id={span_id}")
         
         # Call card verification service - fails fast if card verification fails
         is_verified, verification_error = verify_card(transaction_data)
@@ -582,7 +590,8 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
             'userId': transaction_data['userId'],
             'transactionId': transaction_data['transactionId']
         }
-        logger.info(f"[{correlation_id}] Transaction completed: {json.dumps(flow_data)}")
+        trace_id, span_id = get_trace_span_ids()
+        logger.info(f"Transaction completed: {json.dumps(flow_data)} correlation_id={correlation_id} trace_id={trace_id} span_id={span_id}")
         
         # Use 200 for all successful API calls, status in response body
         # 201 for resource creation (approved transactions that create a new resource)
@@ -616,9 +625,14 @@ def handler(event, context):
     # Add code location attributes to the auto-instrumented server span
     add_code_location_attributes()
     
-    logger.info(f"Event received: {json.dumps(event)}")
+    # Manual trace/span ID injection for distributed tracing correlation (extract FIRST before any exceptions)
+    ctx = trace.get_current_span().get_span_context()
+    trace_id = '{trace:032x}'.format(trace=ctx.trace_id)
+    span_id = '{span:016x}'.format(span=ctx.span_id)
     
     correlation_id = str(uuid.uuid4())
+    
+    logger.info(f"Event received: {json.dumps(event)} trace_id={trace_id} span_id={span_id}")
     start_time = datetime.utcnow().timestamp() * 1000
     
     try:
@@ -643,7 +657,7 @@ def handler(event, context):
             path = '/transactions'
             http_method = 'POST'
 
-        logger.info(f"[{correlation_id}] Processing {http_method} {path} request: {json.dumps(body)}")
+        logger.info(f"Processing {http_method} {path} request: {json.dumps(body)} correlation_id={correlation_id} trace_id={trace_id} span_id={span_id}")
 
         # Route handling
         if path == '/health' and http_method == 'GET':

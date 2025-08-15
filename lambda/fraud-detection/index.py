@@ -8,9 +8,9 @@ from decimal import Decimal
 import logging
 from opentelemetry import trace
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure logging - use Lambda's built-in logging system (exactly like transaction service)
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 # Initialize AWS clients
 dynamodb = boto3.resource('dynamodb')
@@ -331,7 +331,12 @@ def handler(event, context):
     # Add code location attributes to the auto-instrumented server span
     add_code_location_attributes()
     
-    logger.info(f"Fraud detection request: {json.dumps(event, default=decimal_default)}")
+    # Manual trace/span ID injection for distributed tracing correlation
+    ctx = trace.get_current_span().get_span_context()
+    trace_id = '{trace:032x}'.format(trace=ctx.trace_id)
+    span_id = '{span:016x}'.format(span=ctx.span_id)
+    
+    logger.info(f"Fraud detection request: {json.dumps(event, default=decimal_default)} trace_id={trace_id} span_id={span_id}")
 
     try:
         transaction = event
