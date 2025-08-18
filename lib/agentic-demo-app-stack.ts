@@ -12,6 +12,7 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from 'aws-cdk-lib/custom-resources';
+import { Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 export class AgenticDemoAppStack extends cdk.Stack {
@@ -148,7 +149,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       environment: {
         FAILURE_RATE: '0.01', // 1% failure rate by default
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
-        OTEL_RESOURCE_ATTRIBUTES: 'service.name=card-verification-service,deployment.environment=lambda',
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=card-verification-service,deployment.environment=lambda,team.name=external-integrations,business.unit=financial-services,app=transaction-processor',
         OTEL_TRACES_SAMPLER: "always_on",
         OTEL_SERVICE_NAME: 'card-verification-service',
       },
@@ -176,6 +177,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
       }
     });
 
+    // Add service metadata tags for Card Verification Service
+    Tags.of(cardVerificationFunction).add('app', 'Transaction Processor');
+    Tags.of(cardVerificationFunction).add('team-name', 'External Integrations');
+    Tags.of(cardVerificationFunction).add('business-unit', 'Financial Services');
+
     // Lambda Function - Fraud Detection with ADOT Application Signals
     const fraudDetectionFunction = new lambda.Function(this, 'FraudDetectionFunction', {
       functionName: 'fraud-detection-service',
@@ -191,7 +197,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         RISK_THRESHOLD_HIGH: '80',
         RISK_THRESHOLD_MEDIUM: '50',
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=fraud-detection-service,deployment.environment=lambda,team.name=risk-engineering,business.unit=risk-management,app=transaction-processor',
         OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_SERVICE_NAME: 'fraud-detection-service',
         // Fixed: Use root logger (like transaction service) + manual trace/span extraction
         OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false", // Disable OTLP hijacking
         OTEL_PYTHON_LOG_CORRELATION: "true", // Enable trace/span ID correlation
@@ -214,6 +222,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
     fraudRulesTable.grantReadWriteData(fraudDetectionFunction);
     transactionsTable.grantReadWriteData(fraudDetectionFunction);
 
+    // Add service metadata tags for Fraud Detection Service
+    Tags.of(fraudDetectionFunction).add('app', 'Transaction Processor');
+    Tags.of(fraudDetectionFunction).add('team-name', 'Risk Engineering');
+    Tags.of(fraudDetectionFunction).add('business-unit', 'Risk Management');
+
     // Lambda Function - Rewards Eligibility Service with ADOT Application Signals
     const rewardsEligibilityFunction = new lambda.Function(this, 'RewardsEligibilityFunction', {
       functionName: 'rewards-eligibility-service',
@@ -227,7 +240,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         USE_CACHE: 'false',
         REWARDS_QUERY_DELAY_MS: '1500',
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=rewards-eligibility-service,deployment.environment=lambda,team.name=loyalty-platform,business.unit=customer-operations,app=transaction-processor',
         OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_SERVICE_NAME: 'rewards-eligibility-service',
         // Fixed: Use root logger (like transaction service) + manual trace/span extraction
         OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false", // Disable OTLP hijacking
         OTEL_PYTHON_LOG_CORRELATION: "true", // Enable trace/span ID correlation
@@ -245,6 +260,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
     rewardsEligibilityFunction.role?.addManagedPolicy(
       iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
     );
+
+    // Add service metadata tags for Rewards Eligibility Service
+    Tags.of(rewardsEligibilityFunction).add('app', 'Transaction Processor');
+    Tags.of(rewardsEligibilityFunction).add('team-name', 'Loyalty Platform');
+    Tags.of(rewardsEligibilityFunction).add('business-unit', 'Customer Operations');
 
     // Lambda Function - Transaction Service with ADOT Application Signals
     const transactionServiceFunction = new lambda.Function(this, 'TransactionServiceFunction', {
@@ -266,7 +286,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
         MAX_RETRIES: '0', // Demo-configurable retry count for throttling scenarios
         BASE_DELAY_MS: '0.01', // Demo-configurable base delay for retry scenarios
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=transaction-service,deployment.environment=lambda,team.name=payments-core,business.unit=financial-services,app=transaction-processor',
         OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_SERVICE_NAME: 'transaction-service',
         // Fixed: Use root logger (like transaction service) + manual trace/span extraction
         OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false", // Disable OTLP hijacking
         OTEL_PYTHON_LOG_CORRELATION: "true", // Enable trace/span ID correlation
@@ -287,6 +309,11 @@ export class AgenticDemoAppStack extends cdk.Stack {
 
     // Store reference to transaction service log group for scenario control
     const transactionServiceLogGroup = transactionServiceFunction.logGroup;
+
+    // Add service metadata tags for Transaction Service
+    Tags.of(transactionServiceFunction).add('app', 'Transaction Processor');
+    Tags.of(transactionServiceFunction).add('team-name', 'Payments Core');
+    Tags.of(transactionServiceFunction).add('business-unit', 'Financial Services');
 
     // Lambda Function - Scenario Control for Demo Management with ADOT Application Signals
     const scenarioControlFunction = new lambda.Function(this, 'ScenarioControlFunction', {
@@ -772,14 +799,40 @@ export class AgenticDemoAppStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
-    // Transaction Service Lambda Error Rate
-    const transactionLambdaErrorAlarm = new cloudwatch.Alarm(this, 'TransactionLambdaErrorAlarm', {
-      alarmName: 'transaction-service-lambda-errors',
-      alarmDescription: 'Alarm when transaction service Lambda error rate is high',
-      metric: transactionServiceFunction.metricErrors({
+    // Transaction Service Lambda Faults Rate
+    const transactionServiceFaultsAlarm = new cloudwatch.Alarm(this, 'TransactionServiceFaultsAlarm', {
+      alarmName: 'transaction-service-lambda-faults',
+      alarmDescription: 'Alarm when transaction service Lambda fault rate is high',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Fault',
+        dimensionsMap: {
+          Service: 'transaction-service',
+          Environment: 'lambda',
+        },
+        statistic: 'Sum',
         period: cdk.Duration.minutes(5),
       }),
-      threshold: 5, // More than 5 errors in 5 minutes
+      threshold: 5, // More than 5 faults in 5 minutes
+      evaluationPeriods: 2,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    // Transaction Service Lambda Latency
+    const transactionServiceLatencyAlarm = new cloudwatch.Alarm(this, 'TransactionServiceLatencyAlarm', {
+      alarmName: 'transaction-service-lambda-latency',
+      alarmDescription: 'Alarm when transaction service Lambda latency exceeds threshold',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Latency',
+        dimensionsMap: {
+          Environment: 'lambda',
+          Service: 'transaction-service',
+        },
+        statistic: 'p95',
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 5000, // 5 seconds in milliseconds
       evaluationPeriods: 2,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
@@ -813,14 +866,21 @@ export class AgenticDemoAppStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
-    // Lambda Function Error Rate
-    const lambdaErrorAlarm = new cloudwatch.Alarm(this, 'LambdaErrorAlarm', {
-      alarmName: 'fraud-detection-lambda-errors',
-      alarmDescription: 'Alarm when Lambda function error rate is high',
-      metric: fraudDetectionFunction.metricErrors({
+    // Fraud Detection Function Faults Rate
+    const fraudDetectionFaultsAlarm = new cloudwatch.Alarm(this, 'FraudDetectionFaultsAlarm', {
+      alarmName: 'fraud-detection-lambda-faults',
+      alarmDescription: 'Alarm when fraud detection Lambda fault rate is high',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Fault',
+        dimensionsMap: {
+          Service: 'fraud-detection-service',
+          Environment: 'lambda',
+        },
+        statistic: 'Sum',
         period: cdk.Duration.minutes(5),
       }),
-      threshold: 5, // More than 5 errors in 5 minutes
+      threshold: 5, // More than 5 faults in 5 minutes
       evaluationPeriods: 2,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
@@ -884,6 +944,104 @@ export class AgenticDemoAppStack extends cdk.Stack {
       threshold: 5, // More than 5 retry exhaustions in 2 minutes
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
       evaluationPeriods: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    // Additional Lambda Service Alarms for Core Services
+
+    // Card Verification Service - Faults Alarm
+    const cardVerificationFaultsAlarm = new cloudwatch.Alarm(this, 'CardVerificationFaultsAlarm', {
+      alarmName: 'card-verification-service-faults',
+      alarmDescription: 'Alarm when card verification service fault rate is high',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Fault',
+        dimensionsMap: {
+          Service: 'card-verification-service',
+          Environment: 'lambda',
+        },
+        statistic: 'Sum',
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 5, // More than 5 faults in 5 minutes
+      evaluationPeriods: 2,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    // Card Verification Service - Latency Alarm
+    const cardVerificationLatencyAlarm = new cloudwatch.Alarm(this, 'CardVerificationLatencyAlarm', {
+      alarmName: 'card-verification-service-latency',
+      alarmDescription: 'Alarm when card verification service latency exceeds threshold',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Latency',
+        dimensionsMap: {
+          Environment: 'lambda',
+          Service: 'card-verification-service',
+        },
+        statistic: 'p95',
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 5000, // 5 seconds in milliseconds
+      evaluationPeriods: 2,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    // Fraud Detection Service - Latency Alarm (faults alarm already exists)
+    const fraudDetectionLatencyAlarm = new cloudwatch.Alarm(this, 'FraudDetectionLatencyAlarm', {
+      alarmName: 'fraud-detection-service-latency',
+      alarmDescription: 'Alarm when fraud detection service latency exceeds threshold',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Latency',
+        dimensionsMap: {
+          Environment: 'lambda',
+          Service: 'fraud-detection-service',
+        },
+        statistic: 'p95',
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 5000, // 5 seconds in milliseconds
+      evaluationPeriods: 2,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+
+    // Rewards Eligibility Service - Faults Alarm
+    const rewardsEligibilityFaultsAlarm = new cloudwatch.Alarm(this, 'RewardsEligibilityFaultsAlarm', {
+      alarmName: 'rewards-eligibility-service-faults',
+      alarmDescription: 'Alarm when rewards eligibility service fault rate is high',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Fault',
+        dimensionsMap: {
+          Service: 'rewards-eligibility-service',
+          Environment: 'lambda',
+        },
+        statistic: 'Sum',
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 5, // More than 5 faults in 5 minutes
+      evaluationPeriods: 2,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    // Rewards Eligibility Service - Latency Alarm
+    const rewardsEligibilityLatencyAlarm = new cloudwatch.Alarm(this, 'RewardsEligibilityLatencyAlarm', {
+      alarmName: 'rewards-eligibility-service-latency',
+      alarmDescription: 'Alarm when rewards eligibility service latency exceeds threshold',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Latency',
+        dimensionsMap: {
+          Environment: 'lambda',
+          Service: 'rewards-eligibility-service',
+        },
+        statistic: 'p95',
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 5000, // 5 seconds in milliseconds
+      evaluationPeriods: 2,
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
@@ -1063,7 +1221,9 @@ export class AgenticDemoAppStack extends cdk.Stack {
       memorySize: 256,
       environment: {
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=notification-processor,deployment.environment=lambda,team.name=customer-engagement,business.unit=customer-operations,app=transaction-processor',
         OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_SERVICE_NAME: 'notification-processor',
         // Fixed: Use root logger (like transaction service) + manual trace/span extraction
         OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false", // Disable OTLP hijacking
         OTEL_PYTHON_LOG_CORRELATION: "true", // Enable trace/span ID correlation
@@ -1094,6 +1254,51 @@ export class AgenticDemoAppStack extends cdk.Stack {
       maxBatchingWindow: cdk.Duration.seconds(5), // Wait up to 5 seconds to collect batch
       reportBatchItemFailures: true, // Enable partial batch failure reporting
     }));
+
+    // Add service metadata tags for Notification Processor Service
+    Tags.of(notificationProcessorFunction).add('app', 'Transaction Processor');
+    Tags.of(notificationProcessorFunction).add('team-name', 'Customer Engagement');
+    Tags.of(notificationProcessorFunction).add('business-unit', 'Customer Operations');
+
+    // Notification Processor Service Alarms
+
+    // Notification Processor Service - Faults Alarm
+    const notificationProcessorFaultsAlarm = new cloudwatch.Alarm(this, 'NotificationProcessorFaultsAlarm', {
+      alarmName: 'notification-processor-service-faults',
+      alarmDescription: 'Alarm when notification processor service fault rate is high',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Fault',
+        dimensionsMap: {
+          Service: 'notification-processor',
+          Environment: 'lambda',
+        },
+        statistic: 'Sum',
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 5, // More than 5 faults in 5 minutes
+      evaluationPeriods: 2,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+
+    // Notification Processor Service - Latency Alarm
+    const notificationProcessorLatencyAlarm = new cloudwatch.Alarm(this, 'NotificationProcessorLatencyAlarm', {
+      alarmName: 'notification-processor-service-latency',
+      alarmDescription: 'Alarm when notification processor service latency exceeds threshold',
+      metric: new cloudwatch.Metric({
+        namespace: 'ApplicationSignals',
+        metricName: 'Latency',
+        dimensionsMap: {
+          Environment: 'lambda',
+          Service: 'notification-processor',
+        },
+        statistic: 'p95',
+        period: cdk.Duration.minutes(5),
+      }),
+      threshold: 5000, // 5 seconds in milliseconds
+      evaluationPeriods: 2,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
 
     // Output the table names for reference
     new cdk.CfnOutput(this, 'TransactionsTableName', {
