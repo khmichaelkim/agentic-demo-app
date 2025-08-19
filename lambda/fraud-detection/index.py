@@ -247,10 +247,12 @@ def check_velocity_rules(transaction: Dict[str, Any], fraud_rules: List[Dict[str
             ExpressionAttributeValues={
                 ':userId': transaction.get('userId'),
                 ':timestamp': one_hour_ago
-            }
+            },
+            Select='COUNT',  # Only return count, not full items
+            Limit=50  # Cap at 50 transactions (velocity rules max at 15 anyway)
         )
         
-        recent_transaction_count = len(response.get('Items', []))
+        recent_transaction_count = response.get('Count', 0)  # Use Count instead of len(Items)
         
         # Apply velocity rules
         for rule in velocity_rules:
