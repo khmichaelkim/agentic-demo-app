@@ -64,8 +64,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         name: 'timestamp',
         type: dynamodb.AttributeType.STRING
       },
-      readCapacity: 10,  // Higher capacity so fraud detection velocity checks don't throttle
-      writeCapacity: 5,  // Higher capacity for GSI writes (maintained by DynamoDB)
+      readCapacity: 1000,  // Higher capacity so fraud detection velocity checks don't throttle
+      writeCapacity: 1000,  // Higher capacity for GSI writes (maintained by DynamoDB)
     });
 
     // Fraud Rules Table
@@ -76,8 +76,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         type: dynamodb.AttributeType.STRING
       },
       billingMode: dynamodb.BillingMode.PROVISIONED,
-      readCapacity: 10,   // Higher capacity to handle fraud rule scans without throttling
-      writeCapacity: 5,   // Higher capacity since fraud rules are written once during seeding
+      readCapacity: 1000,   // Higher capacity to handle fraud rule scans without throttling
+      writeCapacity: 1000,   // Higher capacity since fraud rules are written once during seeding
       encryption: dynamodb.TableEncryption.AWS_MANAGED,
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
@@ -1167,7 +1167,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
     
     // Grant DynamoDB table update permissions for throttling demo WCU reset
     dataGeneratorFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['dynamodb:UpdateTable'],
+      actions: ['dynamodb:UpdateTable', 'dynamodb:DescribeTable'],
       resources: [transactionsTable.tableArn],
     }));
     
@@ -1191,8 +1191,12 @@ export class AgenticDemoAppStack extends cdk.Stack {
       enabled: true, // Set to false if you want to disable automatic data generation
     });
 
-    // Add Lambda as target
-    dataGeneratorRule.addTarget(new targets.LambdaFunction(dataGeneratorFunction));
+    // Add Lambda as target with normal scenario payload
+    dataGeneratorRule.addTarget(new targets.LambdaFunction(dataGeneratorFunction, {
+      event: events.RuleTargetInput.fromObject({
+        forceScenario: 'normal'
+      })
+    }));
 
     // Periodic Throttling Demo Rule - triggers throttling demo every 1 hour
     const periodicThrottleRule = new events.Rule(this, 'PeriodicThrottleRule', {

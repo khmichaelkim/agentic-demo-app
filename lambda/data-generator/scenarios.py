@@ -29,6 +29,9 @@ DEMO_SCENARIOS = {
             'low_value': 0.7,    # 70% under $100
             'medium_value': 0.25, # 25% $100-$1000  
             'high_value': 0.05   # 5% over $1000
+        },
+        'special_features': {
+            'reset_wcu': True  # Reset WCU to 1 for elevated traffic demo
         }
     },
     

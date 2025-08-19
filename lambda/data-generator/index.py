@@ -327,8 +327,18 @@ def reset_dynamodb_wcu_to_minimum():
         import boto3
         dynamodb_client = boto3.client('dynamodb')
         
+        # Check current table capacity first
+        response = dynamodb_client.describe_table(TableName='TransactionsTable')
+        current_wcu = response['Table']['ProvisionedThroughput']['WriteCapacityUnits']
+        current_rcu = response['Table']['ProvisionedThroughput']['ReadCapacityUnits']
+        
+        if current_wcu == 1 and current_rcu == 1:
+            logger.info("✅ TransactionsTable already at 1 WCU/RCU - no reset needed")
+            return True
+        
         # Update TransactionsTable WCU to 1
-        response = dynamodb_client.update_table(
+        logger.info(f"🔧 Resetting TransactionsTable from {current_rcu} RCU / {current_wcu} WCU → 1 RCU / 1 WCU")
+        dynamodb_client.update_table(
             TableName='TransactionsTable',
             ProvisionedThroughput={
                 'ReadCapacityUnits': 1,
@@ -398,15 +408,15 @@ def execute_scenario_logic(api_key: str, scenario_config: Dict[str, Any], scenar
     # Check if we should use burst mode for throttling demo
     use_burst_mode = False
     
+    # Check if we need to reset WCU for any scenario
+    if special_features.get('reset_wcu'):
+        logger.info(f"🔧 Resetting DynamoDB WCU to 1 for {scenario_name} scenario...")
+        reset_dynamodb_wcu_to_minimum()
+        time.sleep(2)  # Wait for table update to take effect
+    
     if scenario_name == 'demo_throttling':
         use_burst_mode = True
         logger.info(f"🔥 Throttling scenario active - executing burst mode")
-        
-        # Reset DynamoDB WCU to 1 before starting burst
-        if special_features.get('reset_wcu'):
-            logger.info("🔧 Resetting DynamoDB WCU to 1 for throttling demo...")
-            reset_dynamodb_wcu_to_minimum()
-            time.sleep(2)  # Wait for table update to take effect
     
     if use_burst_mode:
         # SIMPLE BURST: Single wave of concurrent transactions

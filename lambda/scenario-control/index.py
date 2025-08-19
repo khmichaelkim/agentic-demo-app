@@ -20,7 +20,7 @@ SCENARIO_CONFIG_TABLE = os.environ['SCENARIO_CONFIG_TABLE']
 RECENT_TRANSACTIONS_FLOW_TABLE = os.environ.get('RECENT_TRANSACTIONS_FLOW_TABLE')
 TRANSACTION_LOG_GROUP_NAME = os.environ.get('TRANSACTION_LOG_GROUP_NAME')
 
-# Constants for rewards demo
+# Constants
 REWARDS_FUNCTION_NAME = 'rewards-eligibility-service'  # Rewards service for cache toggle
 
 # Get DynamoDB table references
@@ -116,121 +116,8 @@ def get_rewards_cache_status() -> Dict[str, Any]:
             'message': str(error)
         }
 
-def reset_table_wcu(target_wcu: int = 1) -> Dict[str, Any]:
-    """Reset TransactionsTable WCU to ensure consistent demo conditions"""
-    try:
-        # Get current table capacity
-        response = dynamodb_client.describe_table(TableName=TRANSACTIONS_TABLE_NAME)
-        current_wcu = response['Table']['ProvisionedThroughput']['WriteCapacityUnits']
-        
-        if current_wcu == target_wcu:
-            logger.info(f"Table WCU already at target: {current_wcu}")
-            return {'status': 'success', 'message': f'WCU already at {target_wcu}', 'current_wcu': current_wcu}
-        
-        # Update table capacity
-        logger.info(f"Resetting table WCU from {current_wcu} to {target_wcu}")
-        
-        dynamodb_client.update_table(
-            TableName=TRANSACTIONS_TABLE_NAME,
-            ProvisionedThroughput={
-                'ReadCapacityUnits': 10,  # Keep read capacity constant
-                'WriteCapacityUnits': target_wcu
-            }
-        )
-        
-        logger.info(f"Successfully initiated WCU reset to {target_wcu}")
-        return {'status': 'success', 'message': f'WCU reset initiated: {current_wcu} → {target_wcu}', 'previous_wcu': current_wcu, 'target_wcu': target_wcu}
-        
-    except Exception as error:
-        logger.error(f"Error resetting table WCU: {error}")
-        return {'status': 'error', 'message': str(error)}
 
-def trigger_burst_demo(preset_name: str = None, custom_params: Dict[str, Any] = None, reset_wcu: bool = True) -> Dict[str, Any]:
-    """Trigger burst demo by invoking data generator Lambda with event payload"""
-    try:
-        # Reset WCU to baseline before burst if requested
-        if reset_wcu:
-            wcu_result = reset_table_wcu()
-            logger.info(f"WCU reset result: {wcu_result}")
-        
-        # Use preset or custom parameters
-        if preset_name and preset_name in BURST_PRESETS:
-            burst_params = BURST_PRESETS[preset_name].copy()
-            description = burst_params.pop('description', '')
-        elif custom_params:
-            burst_params = custom_params
-            description = f"Custom burst: {burst_params.get('size', 'N/A')} transactions"
-        else:
-            # Default throttle demo
-            burst_params = BURST_PRESETS['throttle'].copy()
-            description = burst_params.pop('description', '')
-        
-        # Create event payload for data generator
-        event_payload = {
-            'action': 'burst',
-            'burst': burst_params
-        }
-        
-        logger.info(f"Triggering burst demo with payload: {event_payload}")
-        
-        # Invoke data generator Lambda asynchronously
-        response = lambda_client.invoke(
-            FunctionName=BURST_GENERATOR_FUNCTION_NAME,
-            InvocationType='Event',  # Asynchronous invocation
-            Payload=json.dumps(event_payload)
-        )
-        
-        logger.info(f"Successfully triggered burst demo: {preset_name or 'custom'}")
-        
-        result = {
-            'status': 'success',
-            'message': f'Burst demo started: {description}',
-            'preset': preset_name,
-            'burst_params': burst_params,
-            'lambda_status': response['StatusCode']
-        }
-        
-        # Include WCU reset info if it was performed
-        if reset_wcu and 'wcu_result' in locals():
-            result['wcu_reset'] = wcu_result
-        
-        return result
-        
-    except Exception as error:
-        logger.error(f"Error triggering burst demo: {error}")
-        return {
-            'status': 'error',
-            'message': str(error)
-        }
 
-def get_burst_presets() -> Dict[str, Any]:
-    """Get available burst demo presets"""
-    try:
-        presets = []
-        for name, config in BURST_PRESETS.items():
-            estimated_duration = config['size'] / config['target_tps']
-            presets.append({
-                'name': name,
-                'description': config['description'],
-                'size': config['size'],
-                'type': config['type'],
-                'target_tps': config['target_tps'],
-                'estimated_duration': f"{estimated_duration:.0f}s",
-                'architecture': 'sequential_single_container'
-            })
-        
-        return {
-            'status': 'success',
-            'presets': presets
-        }
-        
-    except Exception as error:
-        logger.error(f"Error getting burst presets: {error}")
-        return {
-            'status': 'error',
-            'message': str(error),
-            'presets': []
-        }
 
 def get_demo_status() -> Dict[str, Any]:
     """Get current demo status - simplified for event-driven architecture"""
@@ -239,8 +126,7 @@ def get_demo_status() -> Dict[str, Any]:
         return {
             'status': 'ready',
             'message': 'Event-driven demo system ready',
-            'architecture': 'burst-on-demand',
-            'available_presets': list(BURST_PRESETS.keys()),
+            'architecture': 'event-driven',
             'baseline_active': True,
             'burst_active': False  # Can't track async bursts easily
         }
@@ -693,19 +579,6 @@ def handler(event, context):
             # Get transaction flow from CloudWatch Logs
             return create_response(200, get_transaction_flow())
             
-        elif path == '/demo/wcu/reset' and method == 'POST':
-            # Reset table WCU to baseline
-            target_wcu = body.get('target_wcu', 1)
-            result = reset_table_wcu(target_wcu)
-            status_code = 200 if result['status'] == 'success' else 400
-            return create_response(status_code, result)
-            
-        elif path == '/demo/burst/scheduled' and method == 'POST':
-            # Scheduled burst (auto WCU reset)
-            preset_name = body.get('preset', 'throttle')
-            result = trigger_burst_demo(preset_name, reset_wcu=True)
-            status_code = 200 if result['status'] == 'success' else 400
-            return create_response(status_code, result)
             
         elif path == '/demo/badcode/enable-cache' and method == 'POST':
             # Enable rewards cache (fix the issue)
