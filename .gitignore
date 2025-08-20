@@ -12,6 +12,9 @@ cdk.out
 # Test coverage
 coverage/
 
+# Deployment logs
+deploy.log
+
 # Python
 __pycache__/
 *.py[cod]

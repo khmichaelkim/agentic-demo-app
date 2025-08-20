@@ -12,6 +12,8 @@ import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from 'aws-cdk-lib/custom-resources';
 import { Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
@@ -55,6 +57,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
       },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES, // Enable DDB Streams for fraud analytics
       removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
     });
 
@@ -135,6 +138,23 @@ export class AgenticDemoAppStack extends cdk.Stack {
       pointInTimeRecoverySpecification: {
         pointInTimeRecoveryEnabled: true,
       },
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
+    });
+
+    // Fraud Metrics Table for aggregated analytics
+    const fraudMetricsTable = new dynamodb.Table(this, 'FraudMetricsTable', {
+      tableName: 'FraudMetricsTable',
+      partitionKey: {
+        name: 'metricType',
+        type: dynamodb.AttributeType.STRING
+      },
+      sortKey: {
+        name: 'timestamp',
+        type: dynamodb.AttributeType.NUMBER
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      timeToLiveAttribute: 'ttl', // Auto-cleanup old metrics
       removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
     });
 
@@ -1268,6 +1288,91 @@ export class AgenticDemoAppStack extends cdk.Stack {
       resources: [transactionsTable.tableArn]
     }));
 
+    // Lambda Function - Fraud Stream Processor for DDB Streams
+    const fraudStreamProcessorFunction = new lambda.Function(this, 'FraudStreamProcessorFunction', {
+      functionName: 'fraud-stream-processor',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/fraud-stream-processor'),
+      layers: [adotLayer],
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 256,
+      environment: {
+        METRICS_TABLE: fraudMetricsTable.tableName,
+        CLOUDWATCH_NAMESPACE: 'FraudAnalytics',
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=fraud-stream-processor,deployment.environment=lambda,team.name=analytics,business.unit=risk-management,app=transaction-processor',
+        OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_SERVICE_NAME: 'fraud-stream-processor',
+        OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false",
+        OTEL_PYTHON_LOG_CORRELATION: "true",
+        PYTHONUNBUFFERED: "1",
+      },
+      logGroup: new logs.LogGroup(this, 'FraudStreamProcessorLogGroup', {
+        logGroupName: '/aws/lambda/fraud-stream-processor',
+        retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+    });
+
+    // Add Application Signals IAM policy to stream processor
+    fraudStreamProcessorFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
+
+    // Grant permissions
+    transactionsTable.grantStreamRead(fraudStreamProcessorFunction);
+    fraudMetricsTable.grantReadWriteData(fraudStreamProcessorFunction);
+    fraudStreamProcessorFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['cloudwatch:PutMetricData'],
+      resources: ['*']
+    }));
+
+    // Connect DDB Streams to Lambda
+    fraudStreamProcessorFunction.addEventSource(
+      new lambdaEventSources.DynamoEventSource(transactionsTable, {
+        startingPosition: lambda.StartingPosition.LATEST,
+        batchSize: 100,
+        maxBatchingWindow: cdk.Duration.seconds(5), // Process in batches for efficiency
+        bisectBatchOnError: true,
+        retryAttempts: 2,
+      })
+    );
+
+    // Lambda Function - Fraud Metrics API
+    const fraudMetricsApiFunction = new lambda.Function(this, 'FraudMetricsApiFunction', {
+      functionName: 'fraud-metrics-api',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/fraud-metrics-api'),
+      layers: [adotLayer],
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 128,
+      environment: {
+        METRICS_TABLE: fraudMetricsTable.tableName,
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=fraud-metrics-api,deployment.environment=lambda,team.name=analytics,business.unit=risk-management,app=transaction-processor',
+        OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_SERVICE_NAME: 'fraud-metrics-api',
+        OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false",
+        OTEL_PYTHON_LOG_CORRELATION: "true",
+        PYTHONUNBUFFERED: "1",
+      },
+      logGroup: new logs.LogGroup(this, 'FraudMetricsApiLogGroup', {
+        logGroupName: '/aws/lambda/fraud-metrics-api',
+        retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+    });
+
+    // Add Application Signals IAM policy to metrics API
+    fraudMetricsApiFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
+
+    // Grant read permissions
+    fraudMetricsTable.grantReadData(fraudMetricsApiFunction);
+
     // CloudWatch Events Rule to trigger data generator every 1 minute
     const dataGeneratorRule = new events.Rule(this, 'DataGeneratorRule', {
       ruleName: 'transaction-data-generator-schedule',
@@ -1389,6 +1494,34 @@ export class AgenticDemoAppStack extends cdk.Stack {
       treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
     });
 
+    // Fraud Metrics REST API endpoint
+    const fraudMetricsApiIntegration = new apigateway.LambdaIntegration(fraudMetricsApiFunction);
+    const metricsResource = api.root.addResource('metrics');
+    metricsResource.addMethod('GET', fraudMetricsApiIntegration, {
+      apiKeyRequired: false, // No API key for dashboard access
+    });
+
+    // S3 bucket for hosting the fraud analytics dashboard
+    const dashboardBucket = new s3.Bucket(this, 'FraudAnalyticsDashboard', {
+      bucketName: `fraud-analytics-dashboard-${this.account}`,
+      websiteIndexDocument: 'index.html',
+      publicReadAccess: false, // Changed to false to avoid BlockPublicPolicy issue
+      cors: [{
+        allowedOrigins: ['*'],
+        allowedMethods: [s3.HttpMethods.GET],
+        allowedHeaders: ['*'],
+      }],
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true, // Automatically delete objects when stack is deleted
+    });
+
+    // Deploy dashboard files to S3
+    new s3deploy.BucketDeployment(this, 'DeployFraudDashboard', {
+      sources: [s3deploy.Source.asset('./dashboard')],
+      destinationBucket: dashboardBucket,
+      prune: false, // Don't delete existing files
+    });
+
     // Output the table names for reference
     new cdk.CfnOutput(this, 'TransactionsTableName', {
       value: transactionsTable.tableName,
@@ -1479,6 +1612,32 @@ export class AgenticDemoAppStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'RewardsEligibilityFunctionName', {
       value: rewardsEligibilityFunction.functionName,
       description: 'Rewards Eligibility Service Lambda Function Name (bad code push demo)'
+    });
+
+    // Fraud Analytics Dashboard Outputs
+    new cdk.CfnOutput(this, 'FraudDashboardS3URL', {
+      value: `https://s3.console.aws.amazon.com/s3/buckets/${dashboardBucket.bucketName}?region=${this.region}&tab=objects`,
+      description: '🎯 Fraud Analytics Dashboard Files (S3 Console - Download index.html and open locally)'
+    });
+
+    new cdk.CfnOutput(this, 'MetricsAPIEndpoint', {
+      value: api.url + 'metrics',
+      description: '📊 Metrics API Endpoint'
+    });
+
+    new cdk.CfnOutput(this, 'FraudMetricsTableName', {
+      value: fraudMetricsTable.tableName,
+      description: 'DynamoDB Fraud Metrics Table Name'
+    });
+
+    new cdk.CfnOutput(this, 'FraudStreamProcessorFunctionName', {
+      value: fraudStreamProcessorFunction.functionName,
+      description: 'Fraud Stream Processor Lambda Function Name'
+    });
+
+    new cdk.CfnOutput(this, 'FraudMetricsApiFunctionName', {
+      value: fraudMetricsApiFunction.functionName,
+      description: 'Fraud Metrics API Lambda Function Name'
     });
 
     // SLO outputs - Commented out since SLOs are commented out

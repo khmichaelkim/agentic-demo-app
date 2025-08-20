@@ -58,14 +58,19 @@ NORMAL_USERS = SAMPLE_USERS  # All users for normal scenarios
 
 # Transaction patterns for different scenarios
 TRANSACTION_PATTERNS = {
+    'low_risk': {
+        'weight': 30,
+        'amount_range': [5, 200],
+        'velocity': 1
+    },
     'normal': {
-        'weight': 70,
-        'amount_range': [5, 500],
+        'weight': 50,
+        'amount_range': [200, 800],
         'velocity': 1
     },
     'high_value': {
         'weight': 15,
-        'amount_range': [500, 5000],
+        'amount_range': [1000, 5000],
         'velocity': 1
     },
     'suspicious': {
@@ -212,11 +217,17 @@ def generate_scenario_transaction(scenario_config: Dict[str, Any], special_featu
     else:
         user_pool = NORMAL_USERS
     
-    user_id = get_random_element(user_pool)
-    
     # Get transaction value based on scenario mix
     transaction_mix = get_transaction_mix(scenario_config)
     amount = select_transaction_value_based_on_mix(transaction_mix)
+    
+    # For low amounts, use unique user to avoid velocity penalties
+    if amount < 200:  # Low risk threshold
+        # Create a unique user ID to avoid any velocity checks
+        unique_timestamp = int(datetime.now().timestamp() * 1000)
+        user_id = f'low-risk-user-{unique_timestamp}-{random.randint(0, 9999)}'
+    else:
+        user_id = get_random_element(user_pool)
     
     # Select location based on scenario
     if special_features.get('high_risk_locations', 0) > 0 and random.random() < special_features['high_risk_locations']:
@@ -678,8 +689,8 @@ def seed_fraud_rules():
 
 def select_transaction_pattern() -> str:
     """Select a transaction pattern for seeding"""
-    patterns = ['normal', 'high_value', 'suspicious']
-    weights = [70, 20, 10]  # Weighted selection
+    patterns = ['low_risk', 'normal', 'high_value', 'suspicious']
+    weights = [30, 50, 15, 5]  # Weighted selection - more low risk
     return random.choices(patterns, weights=weights)[0]
 
 def generate_transaction_batch(pattern: str) -> List[Dict[str, Any]]:
@@ -690,8 +701,18 @@ def generate_transaction_batch(pattern: str) -> List[Dict[str, Any]]:
     # Generate 1-3 transactions based on velocity
     num_transactions = random.randint(1, pattern_config.get('velocity', 1))
     
-    for _ in range(num_transactions):
-        user_id = get_random_element(SAMPLE_USERS)
+    # For low risk, use unique users to avoid velocity penalties
+    available_users = []
+    if pattern == 'low_risk':
+        # Create unique users for low risk transactions to avoid velocity checks
+        unique_timestamp = int(datetime.now().timestamp() * 1000)
+        available_users = [f'low-risk-user-{unique_timestamp}-{i}' for i in range(10)]
+    
+    for i in range(num_transactions):
+        if pattern == 'low_risk' and i < len(available_users):
+            user_id = available_users[i]  # Use different user each time
+        else:
+            user_id = get_random_element(SAMPLE_USERS)
         amount_range = pattern_config['amount_range']
         amount = get_random_float(amount_range[0], amount_range[1])
         
