@@ -22,3 +22,4 @@ __pycache__/
 env/
 venv/
 .pytest_cache/
+cdk.context.json

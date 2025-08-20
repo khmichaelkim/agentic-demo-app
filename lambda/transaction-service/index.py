@@ -49,6 +49,7 @@ TRANSACTIONS_TABLE = os.environ['DYNAMODB_TABLE_TRANSACTIONS']
 FRAUD_RULES_TABLE = os.environ['DYNAMODB_TABLE_FRAUD_RULES']
 RECENT_TRANSACTIONS_FLOW_TABLE = os.environ.get('RECENT_TRANSACTIONS_FLOW_TABLE')
 SQS_QUEUE_URL = os.environ['SQS_QUEUE_URL']
+CREDIT_SCORE_QUEUE_URL = os.environ.get('CREDIT_SCORE_QUEUE_URL')
 FRAUD_FUNCTION_NAME = os.environ['LAMBDA_FRAUD_FUNCTION_NAME']
 REWARDS_FUNCTION_NAME = os.environ.get('REWARDS_FUNCTION_NAME')
 CARD_VERIFICATION_URL = os.environ.get('CARD_VERIFICATION_URL')
@@ -363,6 +364,52 @@ def send_notification(transaction: Dict[str, Any]) -> None:
         logger.error(f"[{transaction['correlationId']}] Failed to send notification: {error}")
         # Don't fail the transaction if notification fails
 
+def send_credit_score_request(transaction: Dict[str, Any]) -> None:
+    """Send credit score request to SQS for approved transactions"""
+    
+    # Only send credit score requests for approved transactions
+    if transaction.get('status') != 'APPROVED':
+        return
+    
+    # Skip if credit score queue is not configured
+    if not CREDIT_SCORE_QUEUE_URL:
+        logger.warning(f"[{transaction['correlationId']}] Credit score queue not configured, skipping credit score request")
+        return
+    
+    try:
+        message = {
+            'userId': transaction['userId'],
+            'transactionId': transaction['transactionId'],
+            'correlationId': transaction['correlationId'],
+            'timestamp': datetime.utcnow().isoformat(),
+            'triggerType': 'APPROVED_TRANSACTION'
+        }
+
+        sqs_client.send_message(
+            QueueUrl=CREDIT_SCORE_QUEUE_URL,
+            MessageBody=json.dumps(message),
+            MessageAttributes={
+                'UserId': {
+                    'DataType': 'String',
+                    'StringValue': transaction['userId']
+                },
+                'TransactionId': {
+                    'DataType': 'String',
+                    'StringValue': transaction['transactionId']
+                },
+                'TriggerType': {
+                    'DataType': 'String',
+                    'StringValue': 'APPROVED_TRANSACTION'
+                }
+            }
+        )
+        
+        logger.info(f"[{transaction['correlationId']}] Credit score request queued for userId: {transaction['userId']}")
+            
+    except Exception as error:
+        logger.error(f"[{transaction['correlationId']}] Failed to send credit score request: {error}")
+        # Don't fail the transaction if credit score request fails
+
 def send_metrics(transaction: Dict[str, Any], processing_time: float) -> None:
     """Send metrics to CloudWatch"""
     try:
@@ -562,6 +609,9 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
 
         # Send notification to SQS if needed
         send_notification(transaction_data)
+        
+        # Send credit score request for approved transactions
+        send_credit_score_request(transaction_data)
 
         # Send custom metrics
         processing_time = (datetime.utcnow().timestamp() * 1000) - start_time

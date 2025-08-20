@@ -1,20 +1,26 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
 import { AgenticDemoAppStack } from '../lib/agentic-demo-app-stack';
+import { EcsFargateStack } from '../lib/ecs-fargate-stack';
 
 const app = new cdk.App();
-new AgenticDemoAppStack(app, 'AgenticDemoAppStack', {
-  /* If you don't specify 'env', this stack will be environment-agnostic.
-   * Account/Region-dependent features and context lookups will not work,
-   * but a single synthesized template can be deployed anywhere. */
 
-  /* Uncomment the next line to specialize this stack for the AWS Account
-   * and Region that are implied by the current CLI configuration. */
-  // env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION },
+// Environment configuration for us-east-1
+const envConfig = {
+  account: process.env.CDK_DEFAULT_ACCOUNT,
+  region: 'us-east-1'
+};
 
-  /* Uncomment the next line if you know exactly what Account and Region you
-   * want to deploy the stack to. */
-  // env: { account: '123456789012', region: 'us-east-1' },
-
-  /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
+// ECS Fargate stack for credit score service (deploy first)
+const ecsStack = new EcsFargateStack(app, 'EcsFargateStack', {
+  env: envConfig,
 });
+
+// Main serverless stack (now with correct ALB URL from ECS stack)
+const mainStack = new AgenticDemoAppStack(app, 'AgenticDemoAppStack', {
+  env: envConfig,
+  creditScoreAlbUrl: ecsStack.creditScoreAlbUrl, // Pass ALB URL directly from ECS stack
+});
+
+// Restore dependency now that export conflict is resolved
+mainStack.addDependency(ecsStack);

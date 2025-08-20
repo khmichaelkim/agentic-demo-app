@@ -31,7 +31,7 @@ DEMO_SCENARIOS = {
             'high_value': 0.05   # 5% over $1000
         },
         'special_features': {
-            'reset_wcu': True  # Reset WCU to 1 for elevated traffic demo
+            'reset_wcu': True  # Temporarily reset WCU to 1 for elevated traffic demo
         }
     },
     

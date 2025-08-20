@@ -11,12 +11,17 @@ import * as applicationsignals from 'aws-cdk-lib/aws-applicationsignals';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from 'aws-cdk-lib/custom-resources';
 import { Tags } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
+export interface AgenticDemoAppStackProps extends cdk.StackProps {
+  creditScoreAlbUrl?: string;
+}
+
 export class AgenticDemoAppStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  constructor(scope: Construct, id: string, props?: AgenticDemoAppStackProps) {
     super(scope, id, props);
 
     // Application Signals Discovery - Enable Application Signals service discovery
@@ -114,6 +119,25 @@ export class AgenticDemoAppStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
     });
 
+    // User Credit Scores Table for async credit score storage
+    const userCreditScoresTable = new dynamodb.Table(this, 'UserCreditScoresTable', {
+      tableName: 'UserCreditScoresTable',
+      partitionKey: {
+        name: 'userId',
+        type: dynamodb.AttributeType.STRING
+      },
+      sortKey: {
+        name: 'timestamp',
+        type: dynamodb.AttributeType.STRING
+      },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, // Pay per request to avoid throttling complexity
+      encryption: dynamodb.TableEncryption.AWS_MANAGED,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
+      removalPolicy: cdk.RemovalPolicy.DESTROY, // For demo purposes
+    });
+
     // SQS Queues
     
     // Dead Letter Queue
@@ -133,25 +157,33 @@ export class AgenticDemoAppStack extends cdk.Stack {
       },
     });
 
+    // Credit Score Request Queue for async processing
+    const creditScoreQueue = new sqs.Queue(this, 'CreditScoreQueue', {
+      queueName: 'credit-score-requests',
+      retentionPeriod: cdk.Duration.days(4), // Match other queues
+      visibilityTimeout: cdk.Duration.seconds(300), // 5 minutes for processing
+      deadLetterQueue: {
+        queue: deadLetterQueue,
+        maxReceiveCount: 3, // Retry 3 times before sending to DLQ
+      },
+    });
+
     // Custom dependency layer no longer needed - using ADOT layer for Application Signals
 
     // Note: Using IAM authentication instead of API secret for security
 
-    // Lambda Function - Card Verification Service with ADOT Application Signals and Function URL
+    // Lambda Function - Card Verification Service (External Service - No ADOT Instrumentation)
     const cardVerificationFunction = new lambda.Function(this, 'CardVerificationFunction', {
       functionName: 'card-verification-service',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda/card-verification'),
-      layers: [adotLayer],
       timeout: cdk.Duration.seconds(10),
       memorySize: 128,
+      tracing: lambda.Tracing.DISABLED, // Disable X-Ray tracing to simulate external service
       environment: {
         FAILURE_RATE: '0.01', // 1% failure rate by default
-        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
-        OTEL_RESOURCE_ATTRIBUTES: 'service.name=card-verification-service,deployment.environment=lambda,team.name=external-integrations,business.unit=financial-services,app=transaction-processor',
-        OTEL_TRACES_SAMPLER: "always_on",
-        OTEL_SERVICE_NAME: 'card-verification-service',
+        EXTERNAL_SERVICE: 'true', // Mark as external service for tracing
       },
       logGroup: new logs.LogGroup(this, 'CardVerificationLogGroup', {
         logGroupName: '/aws/lambda/agentic-demo-card-verification-service',
@@ -159,11 +191,6 @@ export class AgenticDemoAppStack extends cdk.Stack {
         removalPolicy: cdk.RemovalPolicy.DESTROY,
       }),
     });
-
-    // Add Application Signals IAM policy to card verification function
-    cardVerificationFunction.role?.addManagedPolicy(
-      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
-    );
 
     // Create Function URL for card verification service with IAM authentication
     const cardVerificationFunctionUrl = cardVerificationFunction.addFunctionUrl({
@@ -238,7 +265,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       memorySize: 256,
       environment: {
         USE_CACHE: 'false',
-        REWARDS_QUERY_DELAY_MS: '1500',
+        REWARDS_QUERY_DELAY_MS: '3000',
         AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
         OTEL_RESOURCE_ATTRIBUTES: 'service.name=rewards-eligibility-service,deployment.environment=lambda,team.name=loyalty-platform,business.unit=customer-operations,app=transaction-processor',
         OTEL_TRACES_SAMPLER: "always_on",
@@ -280,6 +307,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         DYNAMODB_TABLE_FRAUD_RULES: fraudRulesTable.tableName,
         RECENT_TRANSACTIONS_FLOW_TABLE: recentTransactionsFlowTable.tableName,
         SQS_QUEUE_URL: notificationQueue.queueUrl,
+        CREDIT_SCORE_QUEUE_URL: creditScoreQueue.queueUrl,
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
         REWARDS_FUNCTION_NAME: rewardsEligibilityFunction.functionName,
         CARD_VERIFICATION_URL: cardVerificationFunctionUrl.url,
@@ -348,6 +376,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
     fraudRulesTable.grantReadData(transactionServiceFunction);
     recentTransactionsFlowTable.grantReadWriteData(transactionServiceFunction);
     notificationQueue.grantSendMessages(transactionServiceFunction);
+    creditScoreQueue.grantSendMessages(transactionServiceFunction);
     fraudDetectionFunction.grantInvoke(transactionServiceFunction);
     rewardsEligibilityFunction.grantInvoke(transactionServiceFunction);
     
@@ -373,6 +402,62 @@ export class AgenticDemoAppStack extends cdk.Stack {
       actions: ['cloudwatch:PutMetricData'],
       resources: ['*'],
     }));
+
+    // Lambda Function - Credit Score Processor with ADOT Application Signals (serverless - no VPC)
+    const creditScoreProcessorFunction = new lambda.Function(this, 'CreditScoreProcessorFunction', {
+      functionName: 'credit-score-processor',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/credit-score-processor'),
+      layers: [adotLayer],
+      timeout: cdk.Duration.seconds(60), // Longer timeout for ECS service calls
+      memorySize: 256,
+      environment: {
+        CREDIT_SCORE_ALB_URL: props?.creditScoreAlbUrl || 'http://localhost:8080', // Use parameter instead of CloudFormation import
+        USER_CREDIT_SCORES_TABLE: userCreditScoresTable.tableName,
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=credit-score-processor,deployment.environment=lambda,team.name=data-enrichment,business.unit=financial-services,app=transaction-processor',
+        OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_SERVICE_NAME: 'credit-score-processor',
+        OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED: "false",
+        OTEL_PYTHON_LOG_CORRELATION: "true",
+        PYTHONUNBUFFERED: "1",
+      },
+      logGroup: new logs.LogGroup(this, 'CreditScoreProcessorLogGroup', {
+        logGroupName: '/aws/lambda/agentic-demo-credit-score-processor',
+        retention: logs.RetentionDays.ONE_YEAR,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+    });
+
+    // Add Application Signals IAM policy to credit score processor function
+    creditScoreProcessorFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
+
+    // Grant Lambda permissions for credit score processing
+    userCreditScoresTable.grantWriteData(creditScoreProcessorFunction);
+    
+    // Grant Lambda permission to invoke ELB (for ALB calls)
+    creditScoreProcessorFunction.addToRolePolicy(new iam.PolicyStatement({
+      actions: [
+        'elasticloadbalancing:*'
+      ],
+      resources: ['*'], // ALB ARN will be in different stack
+    }));
+
+    // Connect Lambda to SQS event source
+    creditScoreProcessorFunction.addEventSource(
+      new lambdaEventSources.SqsEventSource(creditScoreQueue, {
+        batchSize: 1, // Process one message at a time for now
+        maxBatchingWindow: cdk.Duration.seconds(0), // No batching window
+      })
+    );
+
+    // Add service metadata tags for Credit Score Processor
+    Tags.of(creditScoreProcessorFunction).add('app', 'Transaction Processor');
+    Tags.of(creditScoreProcessorFunction).add('team-name', 'Data Enrichment');
+    Tags.of(creditScoreProcessorFunction).add('business-unit', 'Financial Services');
 
     // Direct Lambda Integration - No VPC needed for serverless architecture
 
@@ -501,7 +586,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       description: 'Usage plan for transaction processing API',
       // Temporarily removed throttling to restore service after demo
       quota: {
-        limit: 1000000, // Increased to 1,000,000 requests per month for heavy demo usage
+        limit: 100000000, // Increased to 100,000,000 requests per month for heavy demo usage
         period: apigateway.Period.MONTH,
       },
       apiStages: [{
