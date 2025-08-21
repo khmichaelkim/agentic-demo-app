@@ -52,6 +52,7 @@ SQS_QUEUE_URL = os.environ['SQS_QUEUE_URL']
 CREDIT_SCORE_QUEUE_URL = os.environ.get('CREDIT_SCORE_QUEUE_URL')
 FRAUD_FUNCTION_NAME = os.environ['LAMBDA_FRAUD_FUNCTION_NAME']
 REWARDS_FUNCTION_NAME = os.environ.get('REWARDS_FUNCTION_NAME')
+CARD_STATUS_FUNCTION_NAME = os.environ.get('CARD_STATUS_FUNCTION_NAME')
 CARD_VERIFICATION_URL = os.environ.get('CARD_VERIFICATION_URL')
 
 # Get DynamoDB table references
@@ -233,6 +234,41 @@ def perform_fraud_check(transaction: Dict[str, Any]) -> Dict[str, Any]:
             'riskLevel': 'MEDIUM',
             'timestamp': datetime.utcnow().isoformat()
         }
+
+def validate_card_status(user_id: str, correlation_id: str) -> tuple[bool, str]:
+    """
+    Check card status before processing transaction
+    Returns (is_valid, error_message)
+    """
+    if not CARD_STATUS_FUNCTION_NAME:
+        logger.info(f"[{correlation_id}] Card status service not configured, skipping check")
+        return True, ""
+    
+    try:
+        payload = json.dumps({'userId': user_id})
+        
+        response = lambda_client.invoke(
+            FunctionName=CARD_STATUS_FUNCTION_NAME,
+            InvocationType='RequestResponse',
+            Payload=payload
+        )
+        
+        result = json.loads(response['Payload'].read())
+        logger.info(f"[{correlation_id}] Card status result: {result}")
+        
+        status = result.get('status', 'active')
+        if status == 'blocked':
+            reason = result.get('reason', 'Card blocked due to fraud patterns')
+            return False, f"Card blocked: {reason}"
+        elif status == 'inactive':
+            return False, "Card inactive: No transaction history found"
+        else:
+            return True, ""
+        
+    except Exception as error:
+        logger.warning(f"[{correlation_id}] Card status check failed: {error}")
+        # Fail-safe: Allow transaction to continue if card status service is unavailable
+        return True, ""
 
 def apply_business_rules(transaction: Dict[str, Any], fraud_result: Dict[str, Any]) -> str:
     """Apply business rules to determine transaction status"""
@@ -547,6 +583,24 @@ def process_transaction(body: Dict[str, Any], correlation_id: str, start_time: f
         
         trace_id, span_id = get_trace_span_ids()
         logger.info(f"Generated transaction: {json.dumps(transaction_data)} correlation_id={correlation_id} trace_id={trace_id} span_id={span_id}")
+        
+        # Check card status - block if card has fraud patterns
+        card_valid, card_error = validate_card_status(transaction_data['userId'], correlation_id)
+        if not card_valid:
+            # Card blocked, return business logic decline (200 status)
+            send_metric('CardStatusBlocked', 1, correlation_id)
+            write_to_flow_table({
+                **transaction_data,
+                'status': 'DECLINED',
+                'error': card_error
+            })
+            return create_response(200, {
+                'transactionId': transaction_data['transactionId'],
+                'status': 'DECLINED',
+                'reason': card_error,
+                'correlationId': correlation_id,
+                'declineCode': 'CARD_BLOCKED'
+            })
         
         # Call card verification service - fails fast if card verification fails
         is_verified, verification_error = verify_card(transaction_data)

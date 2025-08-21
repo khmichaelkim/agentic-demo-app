@@ -313,6 +313,37 @@ export class AgenticDemoAppStack extends cdk.Stack {
     Tags.of(rewardsEligibilityFunction).add('team-name', 'Loyalty Platform');
     Tags.of(rewardsEligibilityFunction).add('business-unit', 'Customer Operations');
 
+    // Lambda Function - Card Status Service with ADOT Application Signals
+    const cardStatusFunction = new lambda.Function(this, 'CardStatusFunction', {
+      functionName: 'card-status-service',
+      runtime: lambda.Runtime.PYTHON_3_11,
+      handler: 'index.lambda_handler',
+      code: lambda.Code.fromAsset('lambda/card-status-service'),
+      layers: [adotLayer],
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      environment: {
+        TRANSACTIONS_TABLE_NAME: transactionsTable.tableName,
+        AWS_LAMBDA_EXEC_WRAPPER: "/opt/otel-instrument",
+        OTEL_TRACES_SAMPLER: "always_on",
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=card-status-service,deployment.environment=lambda,team.name=card-operations,business.unit=financial-services,app=transaction-processor',
+        OTEL_AWS_APPLICATION_SIGNALS_ENABLED: 'true',
+        OTEL_METRICS_EXPORTER: 'none',
+        OTEL_PYTHON_DISTRO: 'aws_distro'
+      },
+      tracing: lambda.Tracing.ACTIVE
+    });
+
+    // Add Application Signals IAM policy to card status function
+    cardStatusFunction.role?.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('CloudWatchLambdaApplicationSignalsExecutionRolePolicy')
+    );
+
+    // Add service metadata tags for Card Status Service
+    Tags.of(cardStatusFunction).add('app', 'Transaction Processor');
+    Tags.of(cardStatusFunction).add('team-name', 'Card Operations');
+    Tags.of(cardStatusFunction).add('business-unit', 'Financial Services');
+
     // Lambda Function - Transaction Service with ADOT Application Signals
     const transactionServiceFunction = new lambda.Function(this, 'TransactionServiceFunction', {
       functionName: 'transaction-service',
@@ -330,6 +361,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
         CREDIT_SCORE_QUEUE_URL: creditScoreQueue.queueUrl,
         LAMBDA_FRAUD_FUNCTION_NAME: fraudDetectionFunction.functionName,
         REWARDS_FUNCTION_NAME: rewardsEligibilityFunction.functionName,
+        CARD_STATUS_FUNCTION_NAME: cardStatusFunction.functionName,
         CARD_VERIFICATION_URL: cardVerificationFunctionUrl.url,
         MAX_RETRIES: '0', // Demo-configurable retry count for throttling scenarios
         BASE_DELAY_MS: '0.01', // Demo-configurable base delay for retry scenarios
@@ -399,6 +431,10 @@ export class AgenticDemoAppStack extends cdk.Stack {
     creditScoreQueue.grantSendMessages(transactionServiceFunction);
     fraudDetectionFunction.grantInvoke(transactionServiceFunction);
     rewardsEligibilityFunction.grantInvoke(transactionServiceFunction);
+    cardStatusFunction.grantInvoke(transactionServiceFunction);
+
+    // Grant permissions to the card status service Lambda
+    transactionsTable.grantReadData(cardStatusFunction);
     
     // Grant transaction service permission to invoke the card verification Function URL
     cardVerificationFunction.grantInvokeUrl(transactionServiceFunction);
@@ -742,6 +778,8 @@ export class AgenticDemoAppStack extends cdk.Stack {
         transactionServiceFunction.metricErrors(),
         fraudDetectionFunction.metricDuration(),
         fraudDetectionFunction.metricErrors(),
+        cardStatusFunction.metricDuration(),
+        cardStatusFunction.metricErrors(),
       ],
       width: 12,
       height: 6,
@@ -752,6 +790,7 @@ export class AgenticDemoAppStack extends cdk.Stack {
       left: [
         transactionServiceFunction.metricInvocations(),
         fraudDetectionFunction.metricInvocations(),
+        cardStatusFunction.metricInvocations(),
       ],
       width: 12,
       height: 6,

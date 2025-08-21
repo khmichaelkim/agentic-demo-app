@@ -48,8 +48,8 @@ def handler(event, context):
     
     logger.debug(f"Event: {json.dumps(event)}")
     
-    # Get failure rate from environment variable or use default 5%
-    failure_rate = float(os.environ.get('FAILURE_RATE', '0.05'))
+    # Get failure rate from environment variable - set to 0 for performance testing
+    failure_rate = float(os.environ.get('FAILURE_RATE', '0.0'))
     
     # Prepare standard headers for all responses
     headers = {
@@ -60,9 +60,9 @@ def handler(event, context):
         'Access-Control-Allow-Credentials': 'true'
     }
     
-    # Simulate random failures at specified rate
-    if random.random() < failure_rate:
-        logger.error(f"[{correlation_id}] Card verification failed - service unavailable")
+    # Only simulate failures for specific demo user
+    if failure_rate > 0 and correlation_id.startswith('demo-card-fail'):
+        logger.error(f"[{correlation_id}] Card verification failed - demo failure")
         
         return {
             'statusCode': 503,
