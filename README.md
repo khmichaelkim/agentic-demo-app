@@ -8,6 +8,12 @@ POST a transaction → fraud check → approve/decline → store in DB → send 
 
 **Stack:** API Gateway + Python Lambdas + DynamoDB + SQS + CloudWatch/X-Ray
 
+### Note on deploying the demo app to a region other than IAD 
+This app is set to use the AWS Lambda Layer for OpenTelemetry in IAD us-east-1. The ARN is hardcoded:
+`arn:aws:lambda:us-east-1:615299751070:layer:AWSOpenTelemetryDistroPython:16`
+
+If deploying to another region, please replace this with the correct ARN found here: https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/CloudWatch-Application-Signals-Enable-LambdaMain.html#Enable-Lambda-Layers
+
 ## Quick Start (Fresh AWS Account)
 
 ```bash
